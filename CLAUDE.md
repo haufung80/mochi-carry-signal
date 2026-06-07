@@ -1,0 +1,109 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+The funding-arb **SIGNAL GENERATOR** (BTC/ETH/SOL). It watches live Hyperliquid funding, computes the
+trailing cash-and-carry signal, **RECORDS** every signal, dashboards them, and — **only on the USER's
+explicit approval** — fires the order to `mochi-position-manager`'s funding-arb API. It **never fires
+automatically: approve-to-fire only**. FastAPI service on port **8100** (the position-manager is 8000).
+It decides and records; it does NOT execute — the position-manager owns both legs, retries, and PnL.
+
+## Commands
+
+```bash
+pip install -e ".[dev]"                # repo also on sys.path via tests/conftest.py
+python run.py                          # http://127.0.0.1:8100  (env: HOST, PORT, RELOAD)
+uvicorn mochi_carry_signal.web:app --port 8100     # equivalently
+mochi-carry-signal                     # console script (-> mochi_carry_signal.run:main)
+
+# Tests — fully offline (HL `_post`, the PM HTTP call, and Telegram are all mocked).
+python -m pytest
+python -m pytest tests/test_signal.py -v
+```
+
+No linter/formatter configured. `pyproject.toml` packaging with **pinned** versions (mirrors the PM's
+pinning discipline). `[tool.pytest.ini_options]` sets `asyncio_mode=auto`.
+
+## The LOCKED signal rule (don't drift it)
+
+`mochi_carry_signal/signal.py` is a **deliberate live PORT** of the backtester's
+`strategy.py::compute_signal` (+ `display.py::apr_to_pph`), reduced to a point-in-time evaluation:
+
+- Signal = trailing average of **`funding_rate_pph`** (= `funding_rate_native / interval_hours`,
+  fractional per-hour, **no ×100**) over the last **72h** of *settlements*.
+- Window is **right-closed `(now − L, now]`, NO look-ahead**: a settlement at exactly `now` counts; one
+  strictly after `now` or exactly at `now − L` never does. Empty window → `None` → **HOLD** (never trade
+  on `None`).
+- **OPEN** (FLAT→OPEN) when `avg ≥ apr_to_pph(10)` (10 %/yr) **AND** an HL spot market exists for the
+  coin (the cash-and-carry spot gate). **CLOSE** (OPEN→CLOSE) when `avg ≤ 0`.
+- **Units are load-bearing:** thresholds are compared DIRECTLY to the fractional per-hour rate (the
+  engine unit). `signal.py` is pure (`compute_signal` + `decide`) — fully unit-tested, no IO.
+
+## Architecture (poll → record → approve → fire)
+
+```
+signal.py            PURE: compute_signal(settlements, now, lookback_h=72) + decide(state, avg, spot, ...)
+data/hyperliquid.py  MINIMAL VENDORED HL seam (not a dependency on the backtester): `_post` is the one
+                     monkeypatched HTTP seam; fetch_funding -> funding_rate_pph = native/interval (per-
+                     settlement interval inferred from deltas); has_spot(asset) via spotMeta
+poller.py            poll_once()/poll_loop(): hourly, SLEEP-FIRST (network-free startup). Derives each
+                     asset's resting state from (live PM open arbs) ∪ (our latest non-rejected Signal);
+                     on a state CHANGE inserts ONE pending Signal + Telegram. NEVER fires an order.
+models.py            Signal{status: pending|approved|fired|rejected|error; idempotency_key UNIQUE; arb_id}
+approval.py          approve()/reject(): the approve-to-fire core, gated by APP_SECRET
+pm_client.py         thin PM client (X-Arb-Secret); OFFLINE stub when DRY_RUN/TESTING (no network)
+web.py               FastAPI: GET / dashboard, POST /signals/{id}/{approve,reject}, /healthz, lifespan poller
+notifier.py          this app's OWN Telegram bot — SEPARATE from the PM's; best-effort, never raises
+config.py / db.py / run.py    settings (pydantic-settings) / SQLite+session_scope / uvicorn entrypoint
+```
+
+- **Idempotency** is a deterministic `idempotency_key` per `(asset, transition, HOUR)`
+  (`sig-<ISO-hour>Z-<ASSET>-<KIND>`) + the UNIQUE column — a repeat poll in the same state/hour inserts
+  nothing. This SAME key is sent to the PM `/open`, so the PM's dedup aligns with ours.
+- **State derivation** combines the PM (truth for OPEN) and our signal log so we stay correct when the
+  PM is briefly unreachable or a CLOSE hasn't fired yet; an errored OPEN still HOLDS the OPEN state (so
+  we don't re-fire on top of a half-open arb).
+
+## Contract to the position-manager
+
+The seam is the PM's OpenAPI funding-arb contract (`mochi-position-manager/docs/openapi-funding-arb.yaml`).
+On approve:
+
+- **OPEN** → `POST {PM_BASE_URL}/funding-arb/open {idempotency_key, asset, size_mode:"min",
+  strategy_tag:"hl-cash-and-carry"}` with header `X-Arb-Secret` — **`legs` omitted** (PM uses its
+  DEFAULT single-venue HL combo: long HL spot + short HL perp) and **no `notional`** (ignored for
+  `size_mode:"min"`). Store the returned `arb_id`, mark `fired`.
+- **CLOSE** → `POST /funding-arb/close {arb_id}` for the matching open arb.
+
+`FUNDING_ARB_SECRET` here **must equal the PM's `FUNDING_ARB_SECRET`**. The signal's `idempotency_key`
+IS the PM dedup key.
+
+## Configuration (`config.py`, pydantic-settings, `.env` / `.env.example`)
+
+`get_settings()` is lru-cached; tests set env BEFORE import and `cache_clear()`. Key vars / defaults:
+`PM_BASE_URL` (`http://localhost:8000`), `FUNDING_ARB_SECRET` (sent as `X-Arb-Secret`), `APP_SECRET`
+(gates approve/reject; empty ⇒ gate OPEN, dev only), `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`,
+`ASSETS` (`["BTC","ETH","SOL"]` — accepts a comma-string OR a JSON list), `LOOKBACK_HOURS` (`72`),
+`ENTRY_APR` (`10`), `EXIT_APR` (`0`), `SIZE_MODE` (`min`), `POLL_SECONDS` (`3600`), `DATABASE_URL`,
+`DRY_RUN`/`TESTING`. **`offline = testing or dry_run`** ⇒ the PM call AND Telegram do no outbound
+network (they log what they'd have done); the dashboard still renders.
+
+## Conventions / decisions
+
+- The signal logic is a **deliberate PORT** of `mochi-carry-backtester` — the HL data seam is **VENDORED**
+  (a thin `data/hyperliquid.py`), NOT a dependency on the backtester package. Keep the funding/interval
+  conventions identical so the live signal matches the backtest bit-for-bit.
+- This app has its **own** Telegram bot/chat, distinct from the PM's, so signal vs execution alerts don't
+  collide.
+- The dashboard renders funding/thresholds as **annualized %** (`×24×365×100`) for readability; the
+  engine/config stay in fractional per-hour.
+
+## This is a 3-app system
+
+`mochi-carry-backtester` (research / tuning the carry rule) → **`mochi-carry-signal`** (this repo: live
+decision + approve-to-fire) → `mochi-position-manager` (delta-neutral execution + reporting). The
+integration seam is the **OpenAPI funding-arb contract**
+(`mochi-position-manager/docs/openapi-funding-arb.yaml`); the signal rule is shared by porting from the
+backtester into this repo's `signal.py`.
