@@ -11,6 +11,7 @@ no outbound network (they log what they *would* have done).
 """
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 
 from pydantic import Field, field_validator
@@ -39,7 +40,13 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
 
     # --- Signal parameters (LOCKED rule) ---
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL"])
+    # `str | list[str]`, not bare `list[str]`: pydantic-settings' env source
+    # JSON-decodes a "complex" (list) field BEFORE field validators run, so a
+    # comma-separated ASSETS="BTC,ETH" raised SettingsError. Widening to a Union
+    # makes the env source tolerant of a non-JSON value (allow_parse_failure),
+    # handing the raw string to `_split_assets` below — which ALWAYS returns a
+    # clean list. (2.5.2 lacks the `NoDecode` annotation; this keeps the pin.)
+    assets: str | list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL"])
     lookback_hours: int = 72
     entry_apr: float = 10.0          # %/yr; OPEN when trailing-avg APR >= this
     exit_apr: float = 0.0            # %/yr; CLOSE when trailing-avg APR <= this
@@ -57,11 +64,22 @@ class Settings(BaseSettings):
     @field_validator("assets", mode="before")
     @classmethod
     def _split_assets(cls, v):
-        """Accept a comma-separated string ("BTC,ETH") as well as a JSON list."""
+        """Normalize ASSETS to a clean uppercased list. Accepts either a JSON
+        list (``["BTC","ETH"]``) OR a comma-separated string (``"BTC,ETH,SOL"``);
+        in both cases: split, strip, uppercase, drop empties. Always returns a
+        ``list[str]`` (never leaves a raw string), so the resolved value is a
+        list regardless of how it arrived (env, .env, or the default)."""
         if isinstance(v, str):
             s = v.strip()
-            if s and not s.startswith("["):
+            if s.startswith("["):
+                try:
+                    v = json.loads(s)          # JSON list -> fall through to list path
+                except ValueError:
+                    v = s                       # not valid JSON: treat as a 1-item csv
+            else:
                 return [a.strip().upper() for a in s.split(",") if a.strip()]
+        if isinstance(v, (list, tuple)):
+            return [str(a).strip().upper() for a in v if str(a).strip()]
         return v
 
     @property

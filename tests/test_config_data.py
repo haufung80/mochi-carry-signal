@@ -31,6 +31,31 @@ def test_assets_accepts_csv_string():
     assert s.assets == ["BTC", "ETH"]
 
 
+def test_assets_csv_via_env_does_not_crash(monkeypatch):
+    """REGRESSION: a comma-separated ASSETS from the ENV used to raise
+    SettingsError (pydantic-settings JSON-decodes a list field BEFORE the
+    validator). It must now parse as a list — this is the env path the bare
+    kwarg test above does NOT exercise."""
+    monkeypatch.setenv("ASSETS", "BTC,ETH")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().assets == ["BTC", "ETH"]
+    finally:
+        monkeypatch.delenv("ASSETS", raising=False)
+        get_settings.cache_clear()
+
+
+def test_assets_csv_via_env_strips_and_uppercases(monkeypatch):
+    """Whitespace/lowercase/empties are normalized: ' btc , eth , ' -> [BTC,ETH]."""
+    monkeypatch.setenv("ASSETS", " btc , eth , ")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().assets == ["BTC", "ETH"]
+    finally:
+        monkeypatch.delenv("ASSETS", raising=False)
+        get_settings.cache_clear()
+
+
 def test_assets_accepts_json_list_env(monkeypatch):
     monkeypatch.setenv("ASSETS", '["BTC","SOL"]')
     get_settings.cache_clear()
@@ -38,6 +63,16 @@ def test_assets_accepts_json_list_env(monkeypatch):
         assert get_settings().assets == ["BTC", "SOL"]
     finally:
         monkeypatch.delenv("ASSETS", raising=False)
+        get_settings.cache_clear()
+
+
+def test_assets_default_when_unset(monkeypatch):
+    """With no ASSETS env set, the default list resolves (and stays a list)."""
+    monkeypatch.delenv("ASSETS", raising=False)
+    get_settings.cache_clear()
+    try:
+        assert get_settings().assets == ["BTC", "ETH", "SOL"]
+    finally:
         get_settings.cache_clear()
 
 
