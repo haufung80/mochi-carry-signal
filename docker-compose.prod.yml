@@ -1,0 +1,64 @@
+# Production stack for a single VM (AWS Lightsail instance), SEPARATE from the
+# position-manager's box.
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Caddy terminates HTTPS (auto Let's Encrypt cert for mochi-carry-signal.duckdns.org)
+# and reverse-proxies to the signal app. The app is NOT exposed to the host
+# directly — only Caddy's 80/443 are public. The SQLite signals DB lives on ./data
+# on the host disk, so it survives container restarts and redeploys.
+#
+# The app reaches the position-manager over the public internet (PM_BASE_URL in
+# .env -> https://mochi-position-manager.duckdns.org), authenticated with the
+# shared X-Arb-Secret (FUNDING_ARB_SECRET must equal the PM's).
+services:
+  app:
+    build: .
+    container_name: mochi-signal-app
+    restart: always
+    env_file: .env
+    environment:
+      # Absolute path inside the container; overrides any DATABASE_URL in .env.
+      DATABASE_URL: "sqlite:////app/data/signals.db"
+    volumes:
+      - ./data:/app/data          # persistent: the signals DB (+ WAL files)
+    expose:
+      - "8100"                     # internal only; Caddy reaches it on the compose network
+
+  # Continuous off-box backup of the SQLite DB to S3-compatible storage (e.g.
+  # Cloudflare R2 free tier). Idles harmlessly until LITESTREAM_* is set in .env.
+  # Shares the same ./data volume; the DB is in WAL mode (db.py sets it).
+  litestream:
+    image: litestream/litestream:0.3.13
+    container_name: mochi-signal-litestream
+    restart: always
+    env_file: .env
+    volumes:
+      - ./data:/data                              # same DB the app writes
+      - ./litestream.yml:/etc/litestream.yml:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        if [ -n "$$LITESTREAM_S3_BUCKET" ] && [ -n "$$LITESTREAM_ACCESS_KEY_ID" ]; then
+        exec litestream replicate -config /etc/litestream.yml;
+        else echo "litestream: LITESTREAM_* not set in .env - idling (no backup). See DEPLOY.md.";
+        exec tail -f /dev/null; fi
+    depends_on:
+      - app
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: mochi-signal-caddy
+    restart: always
+    ports:
+      - "80:80"                    # needed for Let's Encrypt HTTP-01 challenge
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data           # persisted certs — don't lose these
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  caddy_data:
+  caddy_config:

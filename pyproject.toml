@@ -41,6 +41,12 @@ mochi-carry-signal = "mochi_carry_signal.run:main"
 [tool.setuptools.packages.find]
 include = ["mochi_carry_signal*"]
 
+# Ship the Jinja dashboard template inside the wheel so `pip install .` (the
+# Docker image) can render it — without this, only .py files are packaged and the
+# dashboard 500s on a non-editable install.
+[tool.setuptools.package-data]
+mochi_carry_signal = ["templates/*.html"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

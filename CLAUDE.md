@@ -140,3 +140,16 @@ decision + approve-to-fire) → `mochi-position-manager` (delta-neutral executio
 integration seam is the **OpenAPI funding-arb contract**
 (`mochi-position-manager/docs/openapi-funding-arb.yaml`); the signal rule is shared by porting from the
 backtester into this repo's `signal.py`.
+
+## Deployment
+
+Production runs as a **self-contained Docker stack** (`docker-compose.prod.yml`) on its OWN AWS Lightsail
+VM — SEPARATE from the position-manager — deliberately mirroring the PM's setup: **Caddy** terminates
+HTTPS (auto Let's Encrypt for `mochi-carry-signal.duckdns.org`) and reverse-proxies to the app on `:8100`;
+a **Litestream** sidecar continuously backs up `signals.db` to S3/R2 (idles until `LITESTREAM_*` set). Only
+Caddy's 80/443 are public; `./data` on the host holds the SQLite DB. The app reaches the PM over its public
+DNS (`PM_BASE_URL=https://mochi-position-manager.duckdns.org`) with the shared `X-Arb-Secret`. The
+`Dockerfile` does `pip install .` (so pyproject stays the single dep source of truth) — note
+`[tool.setuptools.package-data]` ships `templates/*.html` into the wheel, else the dashboard 500s on a
+non-editable install. Full runbook: **`DEPLOY.md`**. The signal box holds **no exchange keys** — execution
+stays entirely in the PM.

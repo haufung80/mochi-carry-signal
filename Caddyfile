@@ -1,0 +1,9 @@
+# Caddy auto-provisions + auto-renews HTTPS for this hostname and reverse-proxies
+# to the signal app container (service name `app`, port 8100) over the compose
+# network.
+#
+# Before Caddy can obtain the Let's Encrypt cert, this hostname's DNS A record
+# must already point to THIS server's static IP, and ports 80 + 443 must be open.
+mochi-carry-signal.duckdns.org {
+    reverse_proxy app:8100
+}

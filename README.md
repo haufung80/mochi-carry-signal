@@ -139,6 +139,21 @@ DRY_RUN=true python run.py
 **Live end-to-end** needs the position-manager running with its funding-arb API
 configured (`FUNDING_ARB_SECRET` set there) and the **same** secret set here.
 
+## Deployment (production)
+
+Self-contained Docker stack — **Caddy** (auto-HTTPS) + the app + an optional
+**Litestream** SQLite backup — for its own AWS Lightsail VM, mirroring the
+position-manager's deployment. The dashboard is served at
+`https://mochi-carry-signal.duckdns.org`; the app reaches the PM over its public
+DNS with the shared `X-Arb-Secret`.
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Full step-by-step (instance, static IP, DuckDNS, firewall, `.env`, verify,
+updates, backups) is in **[DEPLOY.md](DEPLOY.md)**.
+
 ## Tests
 
 Fully offline — temp SQLite DB, `TESTING=true`, no network or Telegram (the HL
