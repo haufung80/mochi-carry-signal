@@ -49,7 +49,8 @@ mochi_carry_signal/
   signal.py            PURE: compute_signal(settlements, now, lookback_h=72) (right-closed, no
                        look-ahead) + decide(state, avg_pph, spot_ok, entry_pph, exit_pph)
   chart.py             PURE: build_funding_chart(...) -> inline-SVG coordinates for the dashboard's
-                       1-month funding history (raw + trailing line + entry/exit markers). No IO.
+                       6-month funding history (raw + trailing line + entry/exit markers). O(N)
+                       windowed trailing + strided draw so a months-long window stays fast. No IO.
   models.py            Signal{... idempotency_key UNIQUE, status, arb_id, ...}
   db.py                SQLite engine + session_scope (WAL, busy_timeout)
   poller.py            poll_once()/poll_loop(): fetch -> compute -> derive state -> on a CHANGE

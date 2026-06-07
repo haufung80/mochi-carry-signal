@@ -15,6 +15,7 @@ signal the poller acts on (no second implementation to drift).
 """
 from __future__ import annotations
 
+import bisect
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,11 @@ from .signal import Settlement, compute_signal, pph_to_apr
 # Marker colours (match the dashboard's .pos/.neg palette).
 _OPEN_COLOR = "#4ade80"   # green ▲
 _CLOSE_COLOR = "#f87171"  # red ▼
+
+# Cap on points actually DRAWN per line. A months-long hourly window is otherwise
+# thousands of sub-pixel points (heavy HTML, no visual gain); the trailing average
+# still uses EVERY settlement — only the emitted polyline is strided.
+_MAX_DRAW_POINTS = 1600
 
 
 @dataclass(frozen=True)
@@ -112,6 +118,37 @@ def _fmt_pct(v: float, step: float) -> str:
     return f"{v:.{decimals}f}%"
 
 
+def _trailing_apr_series(all_sorted, query_pts, lookback_h):
+    """Trailing-avg APR at each query point — the LOCKED rule, O(N) not O(N^2).
+
+    For each point it bisects the ``(t-L, t]`` window out of the time-sorted
+    settlements and hands the slice to ``compute_signal`` (which re-applies the
+    exact right-closed filter), so compute_signal stays the single source of truth
+    — without rescanning every settlement for every point (the difference between
+    ~20 ms and ~500 ms once the window is months long)."""
+    times = [s.time.timestamp() for s in all_sorted]
+    win_s = lookback_h * 3600.0
+    out = []
+    for q in query_pts:
+        t = q.time.timestamp()
+        lo = bisect.bisect_left(times, t - win_s)   # generous; compute_signal re-filters
+        hi = bisect.bisect_right(times, t)
+        out.append(pph_to_apr(compute_signal(all_sorted[lo:hi], q.time, lookback_h)))
+    return out
+
+
+def _draw_indices(n: int, max_points: int):
+    """Indices to actually draw: all of them, or a uniform stride that always
+    keeps the first and last point (so the full time span is still spanned)."""
+    if n <= max_points:
+        return range(n)
+    stride = math.ceil(n / max_points)
+    idx = list(range(0, n, stride))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    return idx
+
+
 def build_funding_chart(
     asset: str,
     settlements: Sequence[Settlement],
@@ -144,9 +181,9 @@ def build_funding_chart(
     all_sorted = sorted(settlements, key=lambda s: s.time)
     raw_apr = [pph_to_apr(s.funding_rate_pph) for s in pts]
     # Trailing avg AT each displayed settlement via the LOCKED rule (self always
-    # falls inside its own right-closed window, so this is never None here).
-    trail_apr = [pph_to_apr(compute_signal(all_sorted, s.time, lookback_h))
-                 for s in pts]
+    # falls inside its own right-closed window, so this is never None here). O(N)
+    # windowed eval so a 6-month window stays fast.
+    trail_apr = _trailing_apr_series(all_sorted, pts, lookback_h)
 
     in_window = [ev for ev in signals if display_start <= ev.time <= now]
 
@@ -190,9 +227,10 @@ def build_funding_chart(
         return min(max(v, vmin), vmax)
 
     xs = [X(s.time.timestamp()) for s in pts]
+    draw = _draw_indices(len(pts), _MAX_DRAW_POINTS)
     raw_polyline = " ".join(
-        f"{x:.1f},{Y(_clamp(v)):.1f}" for x, v in zip(xs, raw_apr))
-    trail_xy = [(x, Y(v)) for x, v in zip(xs, trail_apr) if v is not None]
+        f"{xs[i]:.1f},{Y(_clamp(raw_apr[i])):.1f}" for i in draw)
+    trail_xy = [(xs[i], Y(trail_apr[i])) for i in draw if trail_apr[i] is not None]
     trail_polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in trail_xy)
     trail_area = ""
     if trail_xy:

@@ -4,11 +4,17 @@ Asserts ``build_funding_chart``'s geometry AND that its "trailing funding" line 
 the SAME LOCKED rule the poller acts on (``signal.compute_signal``), and that
 OPEN/CLOSE signals turn into in-window chart markers.
 """
+import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from mochi_carry_signal.chart import SignalEvent, build_funding_chart
+from mochi_carry_signal.chart import (
+    _MAX_DRAW_POINTS,
+    _trailing_apr_series,
+    SignalEvent,
+    build_funding_chart,
+)
 from mochi_carry_signal.signal import Settlement, compute_signal, pph_to_apr
 
 NOW = datetime(2026, 6, 7, 12, 0, 0, tzinfo=timezone.utc)
@@ -143,3 +149,29 @@ def test_entry_line_visible_and_raw_spike_clamped_to_scale():
     # the spike is clamped onto the plot, not allowed to blow out the y-domain
     assert all(c.plot_top - 0.6 <= y <= c.plot_bottom + 0.6
                for _, y in _coords(c.raw_polyline))
+
+
+# --------------------------------------------------------------------------- #
+# 6-month window: O(N) trailing stays faithful, and the drawn path is strided
+# --------------------------------------------------------------------------- #
+
+def test_rolling_trailing_equals_locked_compute_signal():
+    # The windowed O(N) trailing must be IDENTICAL to rescanning all settlements
+    # with the LOCKED compute_signal (it just slices the window first).
+    rates = [2e-5 + 5e-5 * math.sin(i / 13.0) for i in range(40 * 24)]
+    all_sorted = sorted(_setts(rates), key=lambda s: s.time)
+    disp = [s for s in all_sorted if NOW - timedelta(days=30) <= s.time <= NOW]
+    fast = _trailing_apr_series(all_sorted, disp, 72)
+    slow = [pph_to_apr(compute_signal(all_sorted, s.time, 72)) for s in disp]
+    assert fast == slow
+
+
+def test_six_month_window_downsamples_drawn_path_keeping_span():
+    c = _build(_setts([2e-5] * (180 * 24 + 72)), chart_days=180)
+    assert c.point_count == 180 * 24 + 1               # every settlement is data...
+    raw = _coords(c.raw_polyline)
+    assert len(raw) < c.point_count                    # ...but the path is strided
+    assert len(raw) <= _MAX_DRAW_POINTS + 1
+    xs = [x for x, _ in raw]
+    assert xs[0] <= c.plot_left + 1                     # first + last kept -> full span
+    assert xs[-1] >= c.plot_right - 1

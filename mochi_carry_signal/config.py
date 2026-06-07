@@ -54,8 +54,8 @@ class Settings(BaseSettings):
 
     # --- Dashboard ---
     # Rolling window (days) for the per-asset funding-history charts. Display
-    # only; the LOCKED signal still uses lookback_hours.
-    chart_lookback_days: int = 30
+    # only; the LOCKED signal still uses lookback_hours. Default ~6 months.
+    chart_lookback_days: int = 180
 
     # --- Poller cadence ---
     poll_seconds: float = 3600.0

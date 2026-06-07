@@ -106,8 +106,8 @@ If `pm_client` drifts from the vendored spec (or a re-vendor is corrupt/unexpect
 `PM_BASE_URL` (`http://localhost:8000`), `FUNDING_ARB_SECRET` (sent as `X-Arb-Secret`), `APP_SECRET`
 (gates approve/reject; empty ⇒ gate OPEN, dev only), `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`,
 `ASSETS` (`["BTC","ETH","SOL"]` — accepts a comma-string OR a JSON list), `LOOKBACK_HOURS` (`72`),
-`ENTRY_APR` (`10`), `EXIT_APR` (`0`), `SIZE_MODE` (`min`), `CHART_LOOKBACK_DAYS` (`30`, dashboard
-display only), `POLL_SECONDS` (`3600`), `DATABASE_URL`,
+`ENTRY_APR` (`10`), `EXIT_APR` (`0`), `SIZE_MODE` (`min`), `CHART_LOOKBACK_DAYS` (`180` ≈ 6 months,
+dashboard display only), `POLL_SECONDS` (`3600`), `DATABASE_URL`,
 `DRY_RUN`/`TESTING`. **`offline = testing or dry_run`** ⇒ the PM call AND Telegram do no outbound
 network (they log what they'd have done); the dashboard still renders.
 
@@ -125,6 +125,9 @@ network (they log what they'd have done); the dashboard still renders.
   reuses the LOCKED `compute_signal` (no second implementation to drift); raw spikes are clamped onto the
   scale (robust 2–98 pct domain) so they can't squash the signal line. The HL fetch window widens to
   `CHART_LOOKBACK_DAYS×24 + LOOKBACK_HOURS` so the trailing line is valid from the first displayed day.
+  For long (6-month+) windows the trailing avg is computed in O(N) (bisected window slice → still the
+  LOCKED rule, just not rescanning every settlement per point) and the drawn polyline is strided to
+  `_MAX_DRAW_POINTS` (the avg still uses every settlement) so a multi-month page stays fast and lean.
 
 ## This is a 3-app system
 
