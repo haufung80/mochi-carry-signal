@@ -3,7 +3,7 @@
 .venv/
 venv/
 env/
-data/
+/data/
 .env
 .env.local
 __pycache__/

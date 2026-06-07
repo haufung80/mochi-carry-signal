@@ -11,7 +11,7 @@ env/
 
 # Local state
 .env
-data/
+/data/          # runtime SQLite dir at the repo ROOT only — NOT mochi_carry_signal/data/ (a source pkg)
 *.db
 *.db-wal
 *.db-shm
