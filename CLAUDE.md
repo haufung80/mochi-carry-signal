@@ -80,6 +80,22 @@ On approve:
 `FUNDING_ARB_SECRET` here **must equal the PM's `FUNDING_ARB_SECRET`**. The signal's `idempotency_key`
 IS the PM dedup key.
 
+### Contract change protocol (the PM owns it; we conform)
+
+The funding-arb HTTP contract is the **seam** with `mochi-position-manager`, and the **PM OWNS it**; this
+app is a consumer that **conforms**. A PINNED copy of the provider's spec is **vendored** at
+`tests/contract/openapi-funding-arb.yaml`, and `tests/test_pm_contract.py` validates our real outgoing
+`open`/`close` requests against it — so **contract drift fails as a test HERE**, not as a human's job to
+remember. To change the contract:
+
+1. Change it **in the provider**: edit `mochi-position-manager`'s funding-arb schemas, then `make openapi`
+   there to regenerate `docs/openapi-funding-arb.yaml`.
+2. **Re-vendor** it here: `make vendor-contract` (copies the provider spec → `tests/contract/`; override
+   the provider location with `PM_REPO=/path/to/mochi-position-manager`).
+3. **Update `pm_client.py`** to match, and run `python -m pytest tests/test_pm_contract.py`.
+
+If `pm_client` drifts from the vendored spec (or a re-vendor is corrupt/unexpected), that test fails.
+
 ## Configuration (`config.py`, pydantic-settings, `.env` / `.env.example`)
 
 `get_settings()` is lru-cached; tests set env BEFORE import and `cache_clear()`. Key vars / defaults:

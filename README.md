@@ -153,3 +153,20 @@ transition + idempotent repeat), approve-to-fire (the exact `/funding-arb/open`
 wire request incl. `X-Arb-Secret` + `size_mode:"min"` + idempotency_key; close;
 reject; auth), the dashboard (200 with funding + signals + mocked positions),
 the notifier (message format + best-effort), and config/data normalization.
+
+### Contract conformance with the position-manager
+
+The funding-arb HTTP contract is **owned by** `mochi-position-manager`; this app
+conforms to it. A pinned copy of the provider's OpenAPI spec is vendored at
+`tests/contract/openapi-funding-arb.yaml`, and `tests/test_pm_contract.py`
+validates the real outgoing `open`/`close` requests against it — so contract
+drift surfaces as a **failing test here**, automatically.
+
+When the provider changes the contract (edit its schemas, `make openapi` there),
+re-sync the pinned copy and re-run the contract test:
+
+```bash
+make vendor-contract       # cp ../mochi-position-manager/docs/openapi-funding-arb.yaml -> tests/contract/
+# (override the provider location: make vendor-contract PM_REPO=/path/to/mochi-position-manager)
+python -m pytest tests/test_pm_contract.py
+```
