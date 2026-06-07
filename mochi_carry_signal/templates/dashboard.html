@@ -50,6 +50,36 @@
               padding: 4px 8px; font-size: 12px; width: 130px; }
     .banner { background: #0c2a3a; color: #60a5fa; border: 1px solid #1d3a4a; border-radius: 8px;
               padding: 10px 14px; margin-bottom: 16px; font-size: 13px; }
+    /* ---- funding history chart ---- */
+    .chart-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px;
+                  justify-content: space-between; margin-bottom: 8px; }
+    .chart-title { font-size: 14px; font-weight: 600; }
+    .chart-now { color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: #9aa3af; }
+    .legend .lg { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .legend .sw { width: 14px; height: 0; border-top-width: 2px; border-top-style: solid; display: inline-block; }
+    .sw-trail { border-top-color: #60a5fa; }
+    .sw-raw   { border-top-color: #5b6675; }
+    .sw-entry { border-top-color: #facc15; border-top-style: dashed; }
+    .lg-open  { color: #4ade80; } .lg-close { color: #f87171; }
+    .chart { width: 100%; height: auto; display: block; touch-action: pan-y; }
+    .chart .grid  { stroke: #232732; stroke-width: 1; }
+    .chart .axis  { stroke: #2a2e38; stroke-width: 1; }
+    .chart .ylab, .chart .xlab { fill: #6b7280; font-size: 9px;
+                   font-family: "SF Mono", Menlo, monospace; }
+    .chart .ylab  { text-anchor: end; }
+    .chart .xlab  { text-anchor: middle; }
+    .chart .area  { fill: rgba(96,165,250,0.08); stroke: none; }
+    .chart .raw   { fill: none; stroke: #5b6675; stroke-width: 1; opacity: 0.8; }
+    .chart .trail { fill: none; stroke: #60a5fa; stroke-width: 1.7;
+                    stroke-linejoin: round; stroke-linecap: round; }
+    .chart .entry { stroke: #facc15; stroke-width: 1; stroke-dasharray: 5 4; opacity: 0.85; }
+    .chart .zero  { stroke: #4b5563; stroke-width: 1; stroke-dasharray: 2 3; }
+    .chart .entry-lab { fill: #facc15; font-size: 9px; text-anchor: end; opacity: 0.9;
+                    font-family: "SF Mono", Menlo, monospace; }
+    .chart .marker { stroke: var(--mc); stroke-width: 1.4; }
+    .chart .marker.filled { fill: var(--mc); }
+    .chart .marker.hollow { fill: #1a1d24; }
     @media (max-width: 640px) {
       body { padding: 12px;
              padding-left: max(12px, env(safe-area-inset-left));
@@ -95,6 +125,53 @@
     </div>
     {% endfor %}
   </div>
+
+  <!-- ===== funding history charts ===== -->
+  <h2>Funding history — last {{ chart_days }} days · trailing {{ lookback_hours }}h avg vs entry {{ "%.0f"|format(entry_apr) }}%/yr</h2>
+  {% for f in funding %}
+  <div class="card">
+    <div class="chart-head">
+      <span class="chart-title">{{ f.asset }}
+        <span class="pill {{ 's-open' if f.state == 'OPEN' else 's-flat' }}">{{ f.state }}</span>
+        {% if f.chart and f.chart.last_trail_apr is not none %}
+        <span class="chart-now {{ 'pos' if f.chart.last_trail_apr >= 0 else 'neg' }}">trailing {{ "%+.2f"|format(f.chart.last_trail_apr) }}%/yr</span>
+        {% endif %}
+      </span>
+      <span class="legend">
+        <span class="lg"><span class="sw sw-trail"></span>trailing {{ lookback_hours }}h</span>
+        <span class="lg"><span class="sw sw-raw"></span>funding/settlement</span>
+        <span class="lg"><span class="sw sw-entry"></span>entry {{ "%.0f"|format(entry_apr) }}%</span>
+        <span class="lg lg-open">▲ OPEN</span>
+        <span class="lg lg-close">▼ CLOSE</span>
+      </span>
+    </div>
+    {% if f.chart %}
+    {% set c = f.chart %}
+    <svg class="chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ f.asset }} funding history, last {{ chart_days }} days">
+      {% for t in c.y_ticks %}
+      <line class="grid" x1="{{ c.plot_left }}" y1="{{ t.pos }}" x2="{{ c.plot_right }}" y2="{{ t.pos }}"/>
+      <text class="ylab" x="{{ c.plot_left - 6 }}" y="{{ t.pos + 3 }}">{{ t.label }}</text>
+      {% endfor %}
+      {% for t in c.x_ticks %}
+      <text class="xlab" x="{{ t.pos }}" y="{{ c.height - 9 }}">{{ t.label }}</text>
+      {% endfor %}
+      {% if c.trail_area %}<polygon class="area" points="{{ c.trail_area }}"/>{% endif %}
+      {% if c.raw_polyline %}<polyline class="raw" points="{{ c.raw_polyline }}"/>{% endif %}
+      {% if c.zero_y is not none %}<line class="zero" x1="{{ c.plot_left }}" y1="{{ c.zero_y }}" x2="{{ c.plot_right }}" y2="{{ c.zero_y }}"/>{% endif %}
+      {% if c.entry_y is not none %}
+      <line class="entry" x1="{{ c.plot_left }}" y1="{{ c.entry_y }}" x2="{{ c.plot_right }}" y2="{{ c.entry_y }}"/>
+      <text class="entry-lab" x="{{ c.plot_right }}" y="{{ c.entry_y - 4 }}">entry {{ "%.0f"|format(entry_apr) }}%</text>
+      {% endif %}
+      {% if c.trail_polyline %}<polyline class="trail" points="{{ c.trail_polyline }}"/>{% endif %}
+      {% for m in c.markers %}
+      <polygon class="marker {{ 'filled' if m.filled else 'hollow' }}" points="{{ m.points }}" style="--mc: {{ m.color }}; opacity: {{ m.opacity }}"><title>{{ m.title }}</title></polygon>
+      {% endfor %}
+    </svg>
+    {% else %}
+    <div class="muted">No funding history available for {{ f.asset }} in the last {{ chart_days }} days.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
 
   <!-- ===== signal log + approve/reject ===== -->
   <h2>Signal log</h2>

@@ -45,6 +45,9 @@ pinning discipline). `[tool.pytest.ini_options]` sets `asyncio_mode=auto`.
 
 ```
 signal.py            PURE: compute_signal(settlements, now, lookback_h=72) + decide(state, avg, spot, ...)
+chart.py             PURE: build_funding_chart(...) -> inline-SVG coords for the dashboard's rolling
+                     1-month funding history (raw + trailing line + entry/exit markers). Trailing line
+                     reuses the LOCKED compute_signal at each point; no IO, fully unit-tested.
 data/hyperliquid.py  MINIMAL VENDORED HL seam (not a dependency on the backtester): `_post` is the one
                      monkeypatched HTTP seam; fetch_funding -> funding_rate_pph = native/interval (per-
                      settlement interval inferred from deltas); has_spot(asset) via spotMeta
@@ -54,7 +57,8 @@ poller.py            poll_once()/poll_loop(): hourly, SLEEP-FIRST (network-free 
 models.py            Signal{status: pending|approved|fired|rejected|error; idempotency_key UNIQUE; arb_id}
 approval.py          approve()/reject(): the approve-to-fire core, gated by APP_SECRET
 pm_client.py         thin PM client (X-Arb-Secret); OFFLINE stub when DRY_RUN/TESTING (no network)
-web.py               FastAPI: GET / dashboard, POST /signals/{id}/{approve,reject}, /healthz, lifespan poller
+web.py               FastAPI: GET / dashboard (funding-history charts + signal log + PM arbs), POST
+                     /signals/{id}/{approve,reject}, /healthz, lifespan poller
 notifier.py          this app's OWN Telegram bot — SEPARATE from the PM's; best-effort, never raises
 config.py / db.py / run.py    settings (pydantic-settings) / SQLite+session_scope / uvicorn entrypoint
 ```
@@ -102,7 +106,8 @@ If `pm_client` drifts from the vendored spec (or a re-vendor is corrupt/unexpect
 `PM_BASE_URL` (`http://localhost:8000`), `FUNDING_ARB_SECRET` (sent as `X-Arb-Secret`), `APP_SECRET`
 (gates approve/reject; empty ⇒ gate OPEN, dev only), `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`,
 `ASSETS` (`["BTC","ETH","SOL"]` — accepts a comma-string OR a JSON list), `LOOKBACK_HOURS` (`72`),
-`ENTRY_APR` (`10`), `EXIT_APR` (`0`), `SIZE_MODE` (`min`), `POLL_SECONDS` (`3600`), `DATABASE_URL`,
+`ENTRY_APR` (`10`), `EXIT_APR` (`0`), `SIZE_MODE` (`min`), `CHART_LOOKBACK_DAYS` (`30`, dashboard
+display only), `POLL_SECONDS` (`3600`), `DATABASE_URL`,
 `DRY_RUN`/`TESTING`. **`offline = testing or dry_run`** ⇒ the PM call AND Telegram do no outbound
 network (they log what they'd have done); the dashboard still renders.
 
@@ -115,6 +120,11 @@ network (they log what they'd have done); the dashboard still renders.
   collide.
 - The dashboard renders funding/thresholds as **annualized %** (`×24×365×100`) for readability; the
   engine/config stay in fractional per-hour.
+- The dashboard's funding-history chart is **server-rendered inline SVG** (`chart.py` computes coords,
+  the template draws them) — **no JS, no CDN**, so it renders in offline/dry-run mode. Its trailing line
+  reuses the LOCKED `compute_signal` (no second implementation to drift); raw spikes are clamped onto the
+  scale (robust 2–98 pct domain) so they can't squash the signal line. The HL fetch window widens to
+  `CHART_LOOKBACK_DAYS×24 + LOOKBACK_HOURS` so the trailing line is valid from the first displayed day.
 
 ## This is a 3-app system
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
@@ -21,13 +21,17 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
 from .approval import ApprovalError, AuthError, approve, reject
+from .chart import SignalEvent, build_funding_chart
 from .config import get_settings
 from .data import hyperliquid as hl
 from .db import init_db, session_scope
 from .models import Signal
 from .pm_client import get_pm_client
 from .poller import _derive_state, poll_loop
-from .signal import Settlement, apr_to_pph, compute_signal, pph_to_apr
+from .signal import Settlement, compute_signal, pph_to_apr
+
+# Inline-SVG funding chart canvas (viewBox units; scaled to container by CSS).
+_CHART_W, _CHART_H = 720, 240
 
 log = logging.getLogger(__name__)
 
@@ -73,31 +77,76 @@ app = FastAPI(
 
 # --- helpers ----------------------------------------------------------------
 
+def _as_utc(dt: datetime) -> datetime:
+    """Normalize a (possibly naive — SQLite drops tz) timestamp to tz-aware UTC.
+
+    We always STORE UTC, so a naive value read back is interpreted as UTC. This
+    keeps chart-time comparisons (against tz-aware ``now``) from raising."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _signals_by_asset(since: datetime, limit: int = 500) -> dict[str, list]:
+    """Recent recorded signals grouped by asset, for marking on the charts.
+
+    Pulls the most recent ``limit`` rows and keeps those at/after ``since`` (the
+    chart window). Filtering in Python (after normalizing to UTC) avoids
+    SQLite's naive-datetime comparison quirks."""
+    out: dict[str, list] = {}
+    with session_scope() as db:
+        rows = db.execute(
+            select(Signal).order_by(Signal.created_at.desc(), Signal.id.desc())
+            .limit(limit)
+        ).scalars().all()
+        for s in rows:
+            t = _as_utc(s.created_at)
+            if t < since:
+                continue
+            out.setdefault(s.asset.upper(), []).append(SignalEvent(
+                time=t, kind=s.kind,
+                trailing_avg_apr=s.trailing_avg_apr, status=s.status))
+    return out
+
+
 def _live_funding_view(settings) -> list[dict]:
-    """Per-asset live snapshot: trailing-72h avg APR, current funding APR, spot,
-    and derived state. Best-effort — an HL failure yields a blank row, never a
-    500 (the dashboard must always render)."""
+    """Per-asset snapshot (trailing avg / current funding / spot / state) PLUS a
+    one-month funding ``chart`` (raw + trailing line + entry/exit markers).
+
+    One HL fetch per asset (chart window + lookback so the trailing line is valid
+    from day one) feeds both the snapshot and the chart. Best-effort — an HL
+    failure yields a blank row with ``chart=None``, never a 500 (the dashboard
+    must always render)."""
     now = datetime.now(timezone.utc)
     now_ms = int(now.timestamp() * 1000)
-    start_ms = now_ms - 24 * 14 * 3_600_000
+    chart_days = settings.chart_lookback_days
+    lookback_h = settings.lookback_hours
+    # Fetch the display window PLUS the lookback so trailing is correct from day 0.
+    fetch_hours = chart_days * 24 + lookback_h
+    start_ms = now_ms - fetch_hours * 3_600_000
     entry_apr = settings.entry_apr
+    exit_apr = settings.exit_apr
+    sig_by_asset = _signals_by_asset(now - timedelta(days=chart_days))
     rows: list[dict] = []
     pm_open = _pm_open_assets()
     for asset in settings.assets:
         avg_apr = funding_now_apr = None
         spot_ok = False
+        chart = None
         try:
             points = hl.fetch_funding(asset, start_ms, now_ms)
             spot_ok = hl.has_spot(asset)
             settlements = [Settlement(time=p.time,
                                       funding_rate_pph=p.funding_rate_pph)
                            for p in points]
-            avg_pph = compute_signal(settlements, now, settings.lookback_hours)
-            avg_apr = pph_to_apr(avg_pph)
+            avg_apr = pph_to_apr(compute_signal(settlements, now, lookback_h))
             if points:
                 funding_now_apr = pph_to_apr(points[-1].funding_rate_pph)
+            chart = build_funding_chart(
+                asset, settlements, sig_by_asset.get(asset.upper(), []), now,
+                lookback_h=lookback_h, chart_days=chart_days,
+                entry_apr=entry_apr, exit_apr=exit_apr,
+                width=_CHART_W, height=_CHART_H)
         except Exception:  # noqa: BLE001 — display path
-            log.exception("live funding view failed for %s", asset)
+            log.exception("asset view failed for %s", asset)
         with session_scope() as db:
             state = _derive_state(db, pm_open, asset)
         rows.append({
@@ -105,6 +154,7 @@ def _live_funding_view(settings) -> list[dict]:
             "trailing_avg_apr": avg_apr, "funding_now_apr": funding_now_apr,
             "entry_apr": entry_apr,
             "above_entry": (avg_apr is not None and avg_apr >= entry_apr),
+            "chart": chart,
         })
     return rows
 
@@ -145,6 +195,7 @@ def dashboard(request: Request) -> HTMLResponse:
         "entry_apr": settings.entry_apr,
         "exit_apr": settings.exit_apr,
         "lookback_hours": settings.lookback_hours,
+        "chart_days": settings.chart_lookback_days,
         "size_mode": settings.size_mode,
         "pm_base_url": settings.pm_base_url,
         "app_secret_required": bool(settings.app_secret),

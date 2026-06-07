@@ -1,5 +1,5 @@
 """Dashboard + approve/reject route tests (offline; PM positions mocked)."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -52,7 +52,31 @@ def test_dashboard_200_with_funding_signals_positions(monkeypatch, fake_hl):
     assert "pending" in body          # the seeded signal status pill
     assert "arb_id" in body
     assert "9" in body                # the open position
+    # The funding-history chart renders as inline SVG (no JS/CDN, offline-safe).
+    assert "Funding history" in body
+    assert "<svg" in body
+    assert 'class="trail"' in body    # the trailing-72h average line
     assert r.headers["cache-control"].startswith("no-store")
+
+
+def test_dashboard_chart_marks_fired_signal(monkeypatch, fake_hl):
+    """A recorded signal inside the chart window is drawn as a marker on the chart."""
+    now = datetime.now(timezone.utc)
+    fake_hl.funding["BTC"] = make_points([1e-4] * 200, base=now)
+    fake_hl.spot["BTC"] = True
+    with session_scope() as db:
+        db.add(Signal(created_at=now - timedelta(hours=2), asset="BTC", kind="OPEN",
+                      trailing_avg_pph=1e-4, trailing_avg_apr=30.0,
+                      funding_now_apr=25.0, spot_available=True, status="fired",
+                      idempotency_key="k-mark", arb_id=7))
+        db.flush()
+
+    with _client() as c:
+        r = c.get("/")
+    assert r.status_code == 200
+    assert "<svg" in r.text
+    assert 'class="marker' in r.text          # the OPEN signal marker
+    assert "OPEN ·" in r.text                 # marker <title> tooltip
 
 
 def test_healthz():

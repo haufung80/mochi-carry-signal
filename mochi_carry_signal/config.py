@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     exit_apr: float = 0.0            # %/yr; CLOSE when trailing-avg APR <= this
     size_mode: str = "min"           # "min" (paper) or "notional"
 
+    # --- Dashboard ---
+    # Rolling window (days) for the per-asset funding-history charts. Display
+    # only; the LOCKED signal still uses lookback_hours.
+    chart_lookback_days: int = 30
+
     # --- Poller cadence ---
     poll_seconds: float = 3600.0
 
