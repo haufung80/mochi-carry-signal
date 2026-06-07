@@ -4,6 +4,6 @@
 #
 # Before Caddy can obtain the Let's Encrypt cert, this hostname's DNS A record
 # must already point to THIS server's static IP, and ports 80 + 443 must be open.
-mochi-carry-signal.duckdns.org {
+mochi-carry-signal-prod.duckdns.org {
     reverse_proxy app:8100
 }

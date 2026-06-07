@@ -2,7 +2,7 @@
 
 This deploys the signal app as a **self-contained Docker stack on its own Lightsail
 instance**, separate from the position-manager, and serves the dashboard over HTTPS
-at **`https://mochi-carry-signal.duckdns.org`**. It mirrors the PM's deployment
+at **`https://mochi-carry-signal-prod.duckdns.org`**. It mirrors the PM's deployment
 (Docker Compose + Caddy auto-TLS + optional Litestream backup).
 
 ```
@@ -21,8 +21,8 @@ The signals DB lives on `./data` on the host disk (survives restarts/redeploys).
 ## 0. Prerequisites
 
 - An **AWS Lightsail** account.
-- A **DuckDNS** account (free) — you already created the subdomain
-  **`mochi-carry-signal`** (token at <https://www.duckdns.org>).
+- A **DuckDNS** account (free) — the subdomain **`mochi-carry-signal-prod`**
+  (token at <https://www.duckdns.org>).
 - The PM's **`FUNDING_ARB_SECRET`** value (this app must send the same one).
 
 ---
@@ -31,7 +31,7 @@ The signals DB lives on `./data` on the host disk (survives restarts/redeploys).
 
 1. Lightsail → **Create instance** → Linux/Unix → **OS Only → Ubuntu 22.04 LTS**.
 2. Plan: the **$5/mo** (1 GB RAM) tier is plenty.
-3. Name it e.g. `mochi-carry-signal`, create.
+3. Name it e.g. `mochi-signal-prod`, create.
 4. **Networking → Create static IP**, attach it to the instance. Note the IP
    (call it `SERVER_IP`).
 5. **Networking → IPv4 Firewall** on the instance: add rules to allow
@@ -39,11 +39,11 @@ The signals DB lives on `./data` on the host disk (survives restarts/redeploys).
 
 ## 2. Point the DNS at the server
 
-At <https://www.duckdns.org>, set the **`mochi-carry-signal`** domain's IP to
+At <https://www.duckdns.org>, set the **`mochi-carry-signal-prod`** domain's IP to
 `SERVER_IP` and **Update**. Verify from your laptop:
 
 ```bash
-dig +short mochi-carry-signal.duckdns.org      # must print SERVER_IP
+dig +short mochi-carry-signal-prod.duckdns.org      # must print SERVER_IP
 ```
 
 > Lightsail's public IP is static once allocated, so a one-time DuckDNS update is
@@ -97,7 +97,7 @@ TELEGRAM_CHAT_ID=
 > `DATABASE_URL` is set by `docker-compose.prod.yml` to `/app/data/signals.db` —
 > leave the one in `.env` alone.
 
-The **`Caddyfile`** is already set to `mochi-carry-signal.duckdns.org`; no edit
+The **`Caddyfile`** is already set to `mochi-carry-signal-prod.duckdns.org`; no edit
 needed unless you chose a different hostname.
 
 ## 6. Launch
@@ -117,10 +117,10 @@ docker compose -f docker-compose.prod.yml ps                # all "Up", app heal
 ## 7. Verify
 
 ```bash
-curl -s https://mochi-carry-signal.duckdns.org/healthz      # -> ok
+curl -s https://mochi-carry-signal-prod.duckdns.org/healthz      # -> ok
 ```
 
-Then open **<https://mochi-carry-signal.duckdns.org>** in a browser — the dashboard
+Then open **<https://mochi-carry-signal-prod.duckdns.org>** in a browser — the dashboard
 (funding-history charts + signal log) should load over HTTPS. Approving a pending
 signal there will POST to the PM's `/funding-arb/open` with the shared secret.
 

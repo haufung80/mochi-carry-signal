@@ -2,7 +2,7 @@
 # position-manager's box.
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
-# Caddy terminates HTTPS (auto Let's Encrypt cert for mochi-carry-signal.duckdns.org)
+# Caddy terminates HTTPS (auto Let's Encrypt cert for mochi-carry-signal-prod.duckdns.org)
 # and reverse-proxies to the signal app. The app is NOT exposed to the host
 # directly — only Caddy's 80/443 are public. The SQLite signals DB lives on ./data
 # on the host disk, so it survives container restarts and redeploys.
