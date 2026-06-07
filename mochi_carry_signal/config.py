@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # Rolling window (days) for the per-asset funding-history charts. Display
     # only; the LOCKED signal still uses lookback_hours. Default ~6 months.
     chart_lookback_days: int = 180
+    # TTL (seconds) for the dashboard's in-memory funding fetch cache, so rapid
+    # page refreshes don't re-paginate months of HL history each load. Funding
+    # settles hourly, so a few minutes is plenty. The poller is never cached.
+    chart_cache_seconds: float = 600.0
 
     # --- Poller cadence ---
     poll_seconds: float = 3600.0

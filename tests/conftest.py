@@ -41,14 +41,18 @@ def _clean_db():
 
 @pytest.fixture(autouse=True)
 def _reset_singletons():
-    """Reset cached notifier / PM client so per-test monkeypatches take."""
+    """Reset cached notifier / PM client + the dashboard funding cache so
+    per-test monkeypatches and fixtures aren't seen by a later test."""
     from mochi_carry_signal import notifier as notif_mod
     from mochi_carry_signal import pm_client as pm_mod
+    from mochi_carry_signal import web as web_mod
     notif_mod._notifier = None
     pm_mod._client = None
+    web_mod._funding_cache.clear()
     yield
     notif_mod._notifier = None
     pm_mod._client = None
+    web_mod._funding_cache.clear()
 
 
 @pytest.fixture

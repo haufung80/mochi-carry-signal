@@ -107,7 +107,8 @@ If `pm_client` drifts from the vendored spec (or a re-vendor is corrupt/unexpect
 (gates approve/reject; empty ⇒ gate OPEN, dev only), `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`,
 `ASSETS` (`["BTC","ETH","SOL"]` — accepts a comma-string OR a JSON list), `LOOKBACK_HOURS` (`72`),
 `ENTRY_APR` (`10`), `EXIT_APR` (`0`), `SIZE_MODE` (`min`), `CHART_LOOKBACK_DAYS` (`180` ≈ 6 months,
-dashboard display only), `POLL_SECONDS` (`3600`), `DATABASE_URL`,
+dashboard display only), `CHART_CACHE_SECONDS` (`600`; dashboard funding-fetch cache TTL, poller never
+cached), `POLL_SECONDS` (`3600`), `DATABASE_URL`,
 `DRY_RUN`/`TESTING`. **`offline = testing or dry_run`** ⇒ the PM call AND Telegram do no outbound
 network (they log what they'd have done); the dashboard still renders.
 
@@ -128,6 +129,9 @@ network (they log what they'd have done); the dashboard still renders.
   For long (6-month+) windows the trailing avg is computed in O(N) (bisected window slice → still the
   LOCKED rule, just not rescanning every settlement per point) and the drawn polyline is strided to
   `_MAX_DRAW_POINTS` (the avg still uses every settlement) so a multi-month page stays fast and lean.
+- The dashboard caches the HL funding fetch in-memory per asset (`web._funding_cache`, TTL
+  `CHART_CACHE_SECONDS`) so rapid refreshes don't re-paginate months of history each load; the POLLER
+  never reads this cache (it always fetches fresh). Tests clear the cache in the autouse conftest fixture.
 
 ## This is a 3-app system
 

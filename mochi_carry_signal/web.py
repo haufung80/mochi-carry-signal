@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,6 +33,26 @@ from .signal import Settlement, compute_signal, pph_to_apr
 
 # Inline-SVG funding chart canvas (viewBox units; scaled to container by CSS).
 _CHART_W, _CHART_H = 720, 240
+
+# Display-only, in-memory funding cache: asset -> (monotonic_fetched_at, points,
+# spot_ok). Keeps rapid dashboard refreshes from re-paginating months of HL
+# history every load. The POLLER never reads this — it always fetches fresh.
+_funding_cache: dict[str, tuple[float, list, bool]] = {}
+
+
+def _funding_cached(asset: str, start_ms: int, now_ms: int, ttl: float):
+    """``(points, spot_ok)`` for ``asset`` via the short-TTL cache above.
+
+    A cache miss (or ``ttl`` elapsed) fetches fresh and stores it; failures are
+    NOT cached (so the next load retries). ``ttl <= 0`` disables the cache."""
+    key = asset.upper()
+    hit = _funding_cache.get(key)
+    if ttl > 0 and hit is not None and (time.monotonic() - hit[0]) < ttl:
+        return hit[1], hit[2]
+    points = hl.fetch_funding(asset, start_ms, now_ms)
+    spot_ok = hl.has_spot(asset)
+    _funding_cache[key] = (time.monotonic(), points, spot_ok)
+    return points, spot_ok
 
 log = logging.getLogger(__name__)
 
@@ -132,8 +153,8 @@ def _live_funding_view(settings) -> list[dict]:
         spot_ok = False
         chart = None
         try:
-            points = hl.fetch_funding(asset, start_ms, now_ms)
-            spot_ok = hl.has_spot(asset)
+            points, spot_ok = _funding_cached(
+                asset, start_ms, now_ms, settings.chart_cache_seconds)
             settlements = [Settlement(time=p.time,
                                       funding_rate_pph=p.funding_rate_pph)
                            for p in points]

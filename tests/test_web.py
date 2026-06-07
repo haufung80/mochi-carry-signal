@@ -79,6 +79,26 @@ def test_dashboard_chart_marks_fired_signal(monkeypatch, fake_hl):
     assert "OPEN ·" in r.text                 # marker <title> tooltip
 
 
+def test_dashboard_funding_fetch_is_cached(monkeypatch):
+    """Two dashboard loads within the TTL fetch each asset's HL history once."""
+    from mochi_carry_signal.data import hyperliquid as hl
+    pts = make_points([1e-4] * 100, base=datetime.now(timezone.utc))
+    calls: list[str] = []
+
+    def counting_fetch(asset, start_ms, end_ms):
+        calls.append(asset.upper())
+        return pts if asset.upper() == "BTC" else []
+
+    monkeypatch.setattr(hl, "fetch_funding", counting_fetch)
+    monkeypatch.setattr(hl, "has_spot", lambda a: True)
+
+    with _client() as c:
+        assert c.get("/").status_code == 200
+        assert c.get("/").status_code == 200      # second load -> served from cache
+
+    assert calls.count("BTC") == 1                 # fetched once despite two loads
+
+
 def test_healthz():
     with _client() as c:
         assert c.get("/healthz").text == "ok"
