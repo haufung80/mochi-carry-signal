@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mochi-carry-signal"
+version = "0.1.0"
+description = "Funding-arb SIGNAL GENERATOR: watch live Hyperliquid funding (BTC/ETH/SOL), compute a trailing cash-and-carry carry signal, record signals, and on user approval fire an order to the position-manager funding-arb API. Approve-to-fire only — never automatic."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "haufung" }]
+
+# Pinned for reproducibility (mirrors the position-manager's pinning discipline).
+dependencies = [
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.6",
+    "httpx==0.27.2",
+    "pydantic==2.9.2",
+    "pydantic-settings==2.5.2",
+    "sqlalchemy==2.0.35",
+    "jinja2==3.1.4",
+    "python-multipart==0.0.12",     # form bodies for the approve/reject POSTs
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "pytest-asyncio==0.24.0",
+    "hypothesis==6.155.1",          # optional property-based signal tests
+]
+
+[project.scripts]
+mochi-carry-signal = "mochi_carry_signal.run:main"
+
+[tool.setuptools.packages.find]
+include = ["mochi_carry_signal*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

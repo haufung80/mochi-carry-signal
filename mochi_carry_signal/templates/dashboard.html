@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Carry Signal — Mochi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; max-width: 1100px;
+           -webkit-text-size-adjust: 100%; }
+    h1 { margin: 0 0 6px 0; font-size: 22px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;
+         color: #888; margin: 26px 0 10px 0; }
+    .sub { color: #888; font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+    .card { background: #1a1d24; border: 1px solid #2a2e38; border-radius: 8px;
+            padding: 14px 16px; margin-bottom: 16px; overflow-x: auto;
+            -webkit-overflow-scrolling: touch; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 4px; }
+    .stat .label { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat .big { font-size: 24px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .stat .meta { color: #888; font-size: 12px; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid #2a2e38;
+             vertical-align: middle; font-variant-numeric: tabular-nums; }
+    th:first-child, td:first-child, th.l, td.l { text-align: left; }
+    th { color: #888; font-weight: 500; font-size: 11px; text-transform: uppercase; }
+    .mono { font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+    .muted { color: #666; font-size: 12px; }
+    .pos { color: #4ade80; }
+    .neg { color: #f87171; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 9px; font-size: 11px;
+            font-weight: 600; }
+    .s-open    { background: #14532d; color: #4ade80; }
+    .s-flat    { background: #23262e; color: #9aa3af; }
+    .s-pending { background: #3a2a08; color: #facc15; }
+    .s-fired   { background: #14532d; color: #4ade80; }
+    .s-rejected{ background: #3a3a3a; color: #cbd5e1; }
+    .s-error   { background: #4a1414; color: #f87171; }
+    .s-approved{ background: #0c2a3a; color: #60a5fa; }
+    code { font-family: "SF Mono", Menlo, monospace; background: #0f1115; padding: 1px 5px; border-radius: 3px; }
+    .actions { display: flex; gap: 6px; justify-content: flex-end; }
+    button { font: inherit; font-size: 12px; font-weight: 600; border: none; border-radius: 6px;
+             padding: 5px 12px; cursor: pointer; }
+    .btn-approve { background: #14532d; color: #4ade80; }
+    .btn-approve:hover { background: #166534; }
+    .btn-reject { background: #4a1414; color: #f87171; }
+    .btn-reject:hover { background: #5b1a1a; }
+    .secret { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2e38; border-radius: 6px;
+              padding: 4px 8px; font-size: 12px; width: 130px; }
+    .banner { background: #0c2a3a; color: #60a5fa; border: 1px solid #1d3a4a; border-radius: 8px;
+              padding: 10px 14px; margin-bottom: 16px; font-size: 13px; }
+    @media (max-width: 640px) {
+      body { padding: 12px;
+             padding-left: max(12px, env(safe-area-inset-left));
+             padding-right: max(12px, env(safe-area-inset-right)); }
+      h1 { font-size: 19px; }
+      .cards { grid-template-columns: 1fr; }
+      table { font-size: 12px; }
+      th, td { padding: 6px 8px; white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Carry Signal</h1>
+  <div class="sub">
+    Single-venue Hyperliquid cash-and-carry signal generator. LOCKED rule:
+    trailing <strong>{{ lookback_hours }}h</strong> average of per-hour funding,
+    <strong>OPEN</strong> when that average ≥ <strong>{{ "%.0f"|format(entry_apr) }}%/yr</strong>
+    and HL spot exists, <strong>CLOSE</strong> when ≤ {{ "%.0f"|format(exit_apr) }}%/yr.
+    Signals are <strong>recorded automatically</strong>; orders fire only on your
+    <strong>approval</strong> (size_mode: <code>{{ size_mode }}</code>).
+  </div>
+
+  {% if offline %}
+  <div class="banner">⚙️ Offline mode (TESTING/DRY_RUN): the position-manager call and Telegram are mocked — no live orders are sent.</div>
+  {% endif %}
+
+  <!-- ===== per-coin funding vs entry line ===== -->
+  <h2>Funding &amp; state — entry line {{ "%.0f"|format(entry_apr) }}%/yr</h2>
+  <div class="cards">
+    {% for f in funding %}
+    <div class="card stat">
+      <div class="label">{{ f.asset }}
+        <span class="pill {{ 's-open' if f.state == 'OPEN' else 's-flat' }}">{{ f.state }}</span>
+      </div>
+      <div class="big {{ 'pos' if (f.trailing_avg_apr or 0) >= 0 else 'neg' }}">
+        {% if f.trailing_avg_apr is none %}—{% else %}{{ "%+.2f"|format(f.trailing_avg_apr) }}%{% endif %}
+      </div>
+      <div class="meta">
+        72h avg · now {% if f.funding_now_apr is none %}—{% else %}{{ "%+.2f"|format(f.funding_now_apr) }}%/yr{% endif %}
+        · spot {{ "yes" if f.spot_available else "NO" }}
+        {% if f.above_entry %}<span class="pos">· ≥ entry</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- ===== signal log + approve/reject ===== -->
+  <h2>Signal log</h2>
+  <div class="card">
+    {% if not signals %}<div class="muted">No signals recorded yet. The poller records one on each FLAT→OPEN / OPEN→CLOSE transition.</div>{% else %}
+    <table>
+      <thead><tr>
+        <th class="l">Time (UTC)</th><th class="l">Asset</th><th class="l">Signal</th>
+        <th>72h avg</th><th>Funding now</th><th class="l">Spot</th>
+        <th class="l">Status</th><th>arb_id</th><th class="l">Action</th>
+      </tr></thead>
+      <tbody>
+        {% for s in signals %}
+        <tr>
+          <td class="l mono">{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td class="l">{{ s.asset }}</td>
+          <td class="l"><span class="pill {{ 's-open' if s.kind == 'OPEN' else 's-error' }}">{{ s.kind }}</span></td>
+          <td class="{{ 'pos' if s.trailing_avg_apr >= 0 else 'neg' }}">{{ "%+.2f"|format(s.trailing_avg_apr) }}%</td>
+          <td>{% if s.funding_now_apr is none %}—{% else %}{{ "%+.2f"|format(s.funding_now_apr) }}%{% endif %}</td>
+          <td class="l">{{ "yes" if s.spot_available else "no" }}</td>
+          <td class="l">
+            <span class="pill s-{{ s.status }}">{{ s.status }}</span>
+            {% if s.status == 'error' and s.error_message %}<div class="muted">{{ s.error_message[:120] }}</div>{% endif %}
+          </td>
+          <td class="mono">{{ s.arb_id if s.arb_id is not none else "—" }}</td>
+          <td class="l">
+            {% if s.status == 'pending' %}
+            <div class="actions">
+              <form method="post" action="/signals/{{ s.id }}/approve">
+                {% if app_secret_required %}<input class="secret" type="password" name="secret" placeholder="app secret" required>{% endif %}
+                <button class="btn-approve" type="submit">Approve</button>
+              </form>
+              <form method="post" action="/signals/{{ s.id }}/reject">
+                {% if app_secret_required %}<input type="hidden" name="secret" value="">{% endif %}
+                <button class="btn-reject" type="submit">Reject</button>
+              </form>
+            </div>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <!-- ===== live PM open arbs ===== -->
+  <h2>Open funding-arb positions <span class="muted" style="text-transform:none">(from {{ pm_base_url }})</span></h2>
+  <div class="card">
+    {% if not positions %}<div class="muted">No open positions reported by the position-manager{% if offline %} (offline — PM not queried){% endif %}.</div>{% else %}
+    <table>
+      <thead><tr>
+        <th>arb_id</th><th class="l">Asset</th><th class="l">Status</th>
+        <th class="l">Neutral</th><th>Funding</th><th>Net</th>
+      </tr></thead>
+      <tbody>
+        {% for p in positions %}
+        <tr>
+          <td class="mono">{{ p.arb_id }}</td>
+          <td class="l">{{ p.asset }}</td>
+          <td class="l">{{ p.status }}</td>
+          <td class="l">{{ "yes" if p.neutral else "no" }}</td>
+          <td>{% if p.pnl %}${{ "%.4f"|format(p.pnl.funding_total) }}{% else %}—{% endif %}</td>
+          <td>{% if p.pnl %}${{ "%.4f"|format(p.pnl.net) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="muted">Last refreshed {{ now.strftime("%Y-%m-%d %H:%M:%S") }} UTC ·
+    {% if app_secret_required %}approve/reject require the app secret{% else %}app secret not set (approve/reject open — dev mode){% endif %}.</div>
+</body>
+</html>
