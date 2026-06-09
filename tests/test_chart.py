@@ -11,6 +11,7 @@ import pytest
 
 from mochi_carry_signal.chart import (
     _MAX_DRAW_POINTS,
+    _MAX_TOOLTIP_POINTS,
     _trailing_apr_series,
     SignalEvent,
     build_funding_chart,
@@ -175,3 +176,25 @@ def test_six_month_window_downsamples_drawn_path_keeping_span():
     xs = [x for x, _ in raw]
     assert xs[0] <= c.plot_left + 1                     # first + last kept -> full span
     assert xs[-1] >= c.plot_right - 1
+
+
+# --------------------------------------------------------------------------- #
+# Hover/tap tooltip data: TRUE (unclamped) values, x-sorted, capped
+# --------------------------------------------------------------------------- #
+
+def test_tooltip_points_carry_true_unclamped_values():
+    rates = [3e-5] * 300
+    rates[150] = 5e-3                                  # a big spike (clamped on the line)
+    c = _build(_setts(rates))                          # 300 pts < cap -> no downsample
+    tp = c.tooltip_points
+    assert tp and all(len(p) == 5 for p in tp)         # [x, raw, trail, epoch, trail_y]
+    assert [p[0] for p in tp] == sorted(p[0] for p in tp)   # x-sorted for lookup
+    # the spike's TRUE apr is in the tooltip data even though the drawn raw is clamped
+    spike = round(pph_to_apr(5e-3), 1)
+    assert any(abs(p[1] - spike) < 1.0 for p in tp)
+
+
+def test_tooltip_points_capped_for_long_window():
+    c = _build(_setts([2e-5] * (180 * 24 + 72)), chart_days=180)
+    assert len(c.tooltip_points) <= _MAX_TOOLTIP_POINTS + 1
+    assert len(c.tooltip_points) < c.point_count

@@ -82,6 +82,15 @@
     .chart .marker { stroke: var(--mc); stroke-width: 1.4; }
     .chart .marker.filled { fill: var(--mc); }
     .chart .marker.hollow { fill: #1a1d24; }
+    /* hover/tap crosshair + tooltip */
+    .chart-card { position: relative; }
+    .chart .crosshair { stroke: #8aa0b6; stroke-width: 1; stroke-dasharray: 3 3; display: none; pointer-events: none; }
+    .chart .cursor-dot { fill: #60a5fa; stroke: #0f1115; stroke-width: 1.5; display: none; pointer-events: none; }
+    .chart-tip { position: absolute; display: none; pointer-events: none; z-index: 6; transform: translateX(-50%);
+                 background: #0f1115; border: 1px solid #2a2e38; border-radius: 6px; padding: 5px 9px;
+                 font-size: 11px; line-height: 1.5; color: #e6e6e6; white-space: nowrap;
+                 box-shadow: 0 2px 10px rgba(0,0,0,.55); font-variant-numeric: tabular-nums; }
+    .chart-tip .d { color: #888; } .chart-tip .ft { color: #60a5fa; } .chart-tip .fr { color: #9aa3af; }
     @media (max-width: 640px) {
       body { padding: 12px;
              padding-left: max(12px, env(safe-area-inset-left));
@@ -131,7 +140,7 @@
   <!-- ===== funding history charts ===== -->
   <h2>Funding history — last {{ chart_days }} days · trailing {{ lookback_hours }}h avg vs entry {{ "%.0f"|format(entry_apr) }}%/yr</h2>
   {% for f in funding %}
-  <div class="card">
+  <div class="card chart-card">
     <div class="chart-head">
       <span class="chart-title">{{ f.asset }}
         <span class="pill {{ 's-open' if f.state == 'OPEN' else 's-flat' }}">{{ f.state }}</span>
@@ -149,7 +158,8 @@
     </div>
     {% if f.chart %}
     {% set c = f.chart %}
-    <svg class="chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ f.asset }} funding history, last {{ chart_days }} days">
+    <svg class="chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ f.asset }} funding history, last {{ chart_days }} days"
+         data-pts='{{ c.tooltip_points|tojson }}' data-pl="{{ c.plot_left }}" data-pr="{{ c.plot_right }}" data-pt="{{ c.plot_top }}" data-pb="{{ c.plot_bottom }}">
       {% for t in c.y_ticks %}
       <line class="grid" x1="{{ c.plot_left }}" y1="{{ t.pos }}" x2="{{ c.plot_right }}" y2="{{ t.pos }}"/>
       <text class="ylab" x="{{ c.plot_left - 6 }}" y="{{ t.pos + 3 }}">{{ t.label }}</text>
@@ -168,7 +178,10 @@
       {% for m in c.markers %}
       <polygon class="marker {{ 'filled' if m.filled else 'hollow' }}" points="{{ m.points }}" style="--mc: {{ m.color }}; opacity: {{ m.opacity }}"><title>{{ m.title }}</title></polygon>
       {% endfor %}
+      <line class="crosshair" x1="0" y1="0" x2="0" y2="0"/>
+      <circle class="cursor-dot" cx="0" cy="0" r="3.5"/>
     </svg>
+    <div class="chart-tip"></div>
     {% else %}
     <div class="muted">No funding history available for {{ f.asset }} in the last {{ chart_days }} days.</div>
     {% endif %}
@@ -179,10 +192,11 @@
   <h2>Signal log</h2>
   <div class="card">
     {% if not signals %}<div class="muted">No signals recorded yet. The poller records one on each FLAT→OPEN / OPEN→CLOSE transition.</div>{% else %}
+    <div class="muted" style="margin-bottom:8px">Values are a snapshot <strong>at the moment the signal fired</strong> — not live. The current funding is in the cards above.</div>
     <table>
       <thead><tr>
         <th class="l">Time (UTC)</th><th class="l">Asset</th><th class="l">Signal</th>
-        <th>72h avg</th><th>Funding now</th><th class="l">Spot</th>
+        <th>72h avg @signal</th><th>Funding @signal</th><th class="l">Spot</th>
         <th class="l">Status</th><th>arb_id</th><th class="l">Action</th>
       </tr></thead>
       <tbody>
@@ -255,5 +269,54 @@
 
   <div class="muted">Last refreshed {{ now.strftime("%Y-%m-%d %H:%M:%S") }} UTC ·
     {% if app_secret_required %}approve/reject require the app secret{% else %}app secret not set (approve/reject open — dev mode){% endif %}.</div>
+
+  <script>
+  /* Chart hover/tap crosshair + tooltip (true unclamped values). Pointer Events
+     unify mouse + touch; touch-action:pan-y lets vertical page-scroll through
+     while horizontal drag slides the crosshair (iPhone tap + slide). */
+  (function () {
+    function p2(n) { return (n < 10 ? '0' : '') + n; }
+    function fmtDate(ts) { var d = new Date(ts * 1000);
+      return p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate()) + ' ' +
+             p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes()) + 'Z'; }
+    function sgn(v) { return (v >= 0 ? '+' : '') + v.toFixed(1) + '%'; }
+    document.querySelectorAll('svg.chart').forEach(function (svg) {
+      var pts; try { pts = JSON.parse(svg.getAttribute('data-pts') || '[]'); }
+      catch (e) { pts = []; }
+      if (!pts.length) return;
+      var pl = +svg.dataset.pl, pr = +svg.dataset.pr, pt = +svg.dataset.pt, pb = +svg.dataset.pb;
+      var vbw = (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 720;
+      var card = svg.closest('.chart-card');
+      var line = svg.querySelector('.crosshair'), dot = svg.querySelector('.cursor-dot');
+      var tip = card.querySelector('.chart-tip');
+      function nearest(x) { var lo = 0, hi = pts.length - 1;
+        while (lo < hi) { var m = (lo + hi) >> 1; if (pts[m][0] < x) lo = m + 1; else hi = m; }
+        if (lo > 0 && Math.abs(pts[lo - 1][0] - x) <= Math.abs(pts[lo][0] - x)) lo--;
+        return pts[lo]; }
+      function show(clientX) {
+        var r = svg.getBoundingClientRect(); if (!r.width) return;
+        var x = (clientX - r.left) / (r.width / vbw);
+        if (x < pl) x = pl; if (x > pr) x = pr;
+        var d = nearest(x), px = d[0], raw = d[1], tr = d[2], ts = d[3], ty = d[4];
+        line.setAttribute('x1', px); line.setAttribute('x2', px);
+        line.setAttribute('y1', pt); line.setAttribute('y2', pb); line.style.display = 'block';
+        if (ty != null) { dot.setAttribute('cx', px); dot.setAttribute('cy', ty); dot.style.display = 'block'; }
+        else dot.style.display = 'none';
+        tip.innerHTML = '<span class="d">' + fmtDate(ts) + '</span><br>funding <span class="fr">' +
+          sgn(raw) + '</span>' + (tr != null ? '<br>72h avg <span class="ft">' + sgn(tr) + '</span>' : '');
+        tip.style.display = 'block';
+        var cr = card.getBoundingClientRect(), half = tip.offsetWidth / 2 + 4;
+        var L = clientX - cr.left; L = Math.max(half, Math.min(cr.width - half, L));
+        tip.style.left = L + 'px'; tip.style.top = (r.top - cr.top + 6) + 'px';
+      }
+      function hide() { line.style.display = 'none'; dot.style.display = 'none'; tip.style.display = 'none'; }
+      svg.addEventListener('pointermove', function (e) { show(e.clientX); });
+      svg.addEventListener('pointerdown', function (e) { show(e.clientX); });
+      svg.addEventListener('pointerleave', hide);
+      svg.addEventListener('pointerup', hide);
+      svg.addEventListener('pointercancel', hide);
+    });
+  })();
+  </script>
 </body>
 </html>

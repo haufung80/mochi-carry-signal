@@ -31,6 +31,9 @@ _CLOSE_COLOR = "#f87171"  # red ▼
 # thousands of sub-pixel points (heavy HTML, no visual gain); the trailing average
 # still uses EVERY settlement — only the emitted polyline is strided.
 _MAX_DRAW_POINTS = 1600
+# Cap on points emitted for the hover/tap tooltip (coarser than the drawn line —
+# the crosshair snaps to the nearest, sub-pixel resolution isn't needed).
+_MAX_TOOLTIP_POINTS = 360
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,9 @@ class ChartView:
     last_raw_apr: Optional[float]
     last_trail_apr: Optional[float]
     point_count: int
+    # Coarse per-point data for the hover/tap tooltip (true, UNCLAMPED values):
+    # [x_px, raw_apr, trail_apr|None, epoch_seconds, trail_y_px|None], x-sorted.
+    tooltip_points: list
 
 
 def _percentile(sorted_vals: Sequence[float], q: float) -> float:
@@ -238,6 +244,16 @@ def build_funding_chart(
                       + f" {trail_xy[-1][0]:.1f},{plot_bottom:.1f}"
                       + f" {trail_xy[0][0]:.1f},{plot_bottom:.1f}")
 
+    # Coarse per-point data for the hover/tap tooltip — TRUE (unclamped) funding.
+    tt_idx = _draw_indices(len(pts), _MAX_TOOLTIP_POINTS)
+    tooltip_points = [
+        [round(xs[i], 1), round(raw_apr[i], 1),
+         (round(trail_apr[i], 1) if trail_apr[i] is not None else None),
+         int(pts[i].time.timestamp()),
+         (round(Y(trail_apr[i]), 1) if trail_apr[i] is not None else None)]
+        for i in tt_idx
+    ]
+
     def _visible_y(v: float) -> Optional[float]:
         y = Y(v)
         return y if plot_top - 0.5 <= y <= plot_bottom + 0.5 else None
@@ -290,4 +306,4 @@ def build_funding_chart(
         markers=markers, x_ticks=x_ticks, y_ticks=y_ticks,
         last_raw_apr=raw_apr[-1] if raw_apr else None,
         last_trail_apr=trail_apr[-1] if trail_apr else None,
-        point_count=len(pts))
+        point_count=len(pts), tooltip_points=tooltip_points)

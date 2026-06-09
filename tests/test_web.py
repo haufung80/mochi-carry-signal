@@ -52,10 +52,13 @@ def test_dashboard_200_with_funding_signals_positions(monkeypatch, fake_hl):
     assert "pending" in body          # the seeded signal status pill
     assert "arb_id" in body
     assert "9" in body                # the open position
-    # The funding-history chart renders as inline SVG (no JS/CDN, offline-safe).
+    # The funding-history chart renders as inline SVG (no CDN, offline-safe).
     assert "Funding history" in body
     assert "<svg" in body
     assert 'class="trail"' in body    # the trailing-72h average line
+    assert "data-pts=" in body        # per-point data for the hover/tap tooltip
+    assert "crosshair" in body and "chart-tip" in body
+    assert "Funding @signal" in body  # signal-log column relabeled (snapshot, not live)
     assert r.headers["cache-control"].startswith("no-store")
 
 
