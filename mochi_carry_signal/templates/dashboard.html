@@ -54,7 +54,7 @@
               padding: 10px 14px; margin-bottom: 16px; font-size: 13px; }
     /* ---- funding history chart ---- */
     .chart-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px;
-                  justify-content: space-between; margin-bottom: 8px; }
+                  justify-content: space-between; margin-bottom: 8px; position: relative; }
     .chart-title { font-size: 14px; font-weight: 600; }
     .chart-now { color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }
     .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: #9aa3af; }
@@ -86,11 +86,12 @@
     .chart-card { position: relative; }
     .chart .crosshair { stroke: #8aa0b6; stroke-width: 1; stroke-dasharray: 3 3; display: none; pointer-events: none; }
     .chart .cursor-dot { fill: #60a5fa; stroke: #0f1115; stroke-width: 1.5; display: none; pointer-events: none; }
-    .chart-tip { position: absolute; display: none; pointer-events: none; z-index: 6; transform: translateX(-50%);
-                 background: #0f1115; border: 1px solid #2a2e38; border-radius: 6px; padding: 5px 9px;
-                 font-size: 11px; line-height: 1.5; color: #e6e6e6; white-space: nowrap;
-                 box-shadow: 0 2px 10px rgba(0,0,0,.55); font-variant-numeric: tabular-nums; }
-    .chart-tip .d { color: #888; } .chart-tip .ft { color: #60a5fa; } .chart-tip .fr { color: #9aa3af; }
+    /* readout pinned to the TOP of the chart (above the plot) — never under the
+       finger; the crosshair on the plot marks the touched x-position. */
+    .chart-readout { position: absolute; inset: 0 0 auto 0; display: none; z-index: 4; pointer-events: none;
+                     background: #1a1d24; padding: 0 2px; font-size: 11px; line-height: 1.5; color: #e6e6e6;
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+    .chart-readout .d { color: #888; } .chart-readout .ft { color: #60a5fa; } .chart-readout .fr { color: #9aa3af; }
     @media (max-width: 640px) {
       body { padding: 12px;
              padding-left: max(12px, env(safe-area-inset-left));
@@ -155,6 +156,7 @@
         <span class="lg lg-open">▲ OPEN</span>
         <span class="lg lg-close">▼ CLOSE</span>
       </span>
+      <span class="chart-readout"></span>
     </div>
     {% if f.chart %}
     {% set c = f.chart %}
@@ -181,7 +183,6 @@
       <line class="crosshair" x1="0" y1="0" x2="0" y2="0"/>
       <circle class="cursor-dot" cx="0" cy="0" r="3.5"/>
     </svg>
-    <div class="chart-tip"></div>
     {% else %}
     <div class="muted">No funding history available for {{ f.asset }} in the last {{ chart_days }} days.</div>
     {% endif %}
@@ -288,7 +289,7 @@
       var vbw = (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 720;
       var card = svg.closest('.chart-card');
       var line = svg.querySelector('.crosshair'), dot = svg.querySelector('.cursor-dot');
-      var tip = card.querySelector('.chart-tip');
+      var readout = card.querySelector('.chart-readout');
       function nearest(x) { var lo = 0, hi = pts.length - 1;
         while (lo < hi) { var m = (lo + hi) >> 1; if (pts[m][0] < x) lo = m + 1; else hi = m; }
         if (lo > 0 && Math.abs(pts[lo - 1][0] - x) <= Math.abs(pts[lo][0] - x)) lo--;
@@ -302,14 +303,13 @@
         line.setAttribute('y1', pt); line.setAttribute('y2', pb); line.style.display = 'block';
         if (ty != null) { dot.setAttribute('cx', px); dot.setAttribute('cy', ty); dot.style.display = 'block'; }
         else dot.style.display = 'none';
-        tip.innerHTML = '<span class="d">' + fmtDate(ts) + '</span><br>funding <span class="fr">' +
-          sgn(raw) + '</span>' + (tr != null ? '<br>72h avg <span class="ft">' + sgn(tr) + '</span>' : '');
-        tip.style.display = 'block';
-        var cr = card.getBoundingClientRect(), half = tip.offsetWidth / 2 + 4;
-        var L = clientX - cr.left; L = Math.max(half, Math.min(cr.width - half, L));
-        tip.style.left = L + 'px'; tip.style.top = (r.top - cr.top + 6) + 'px';
+        // Readout is pinned to the TOP of the chart (CSS), so it never sits under
+        // the finger — we only set its text here, no positioning.
+        readout.innerHTML = '<span class="d">' + fmtDate(ts) + '</span> · funding <span class="fr">' +
+          sgn(raw) + '</span>' + (tr != null ? ' · 72h <span class="ft">' + sgn(tr) + '</span>' : '');
+        readout.style.display = 'block';
       }
-      function hide() { line.style.display = 'none'; dot.style.display = 'none'; tip.style.display = 'none'; }
+      function hide() { line.style.display = 'none'; dot.style.display = 'none'; readout.style.display = 'none'; }
       svg.addEventListener('pointermove', function (e) { show(e.clientX); });
       svg.addEventListener('pointerdown', function (e) { show(e.clientX); });
       svg.addEventListener('pointerleave', hide);

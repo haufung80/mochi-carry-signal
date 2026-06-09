@@ -57,7 +57,7 @@ def test_dashboard_200_with_funding_signals_positions(monkeypatch, fake_hl):
     assert "<svg" in body
     assert 'class="trail"' in body    # the trailing-72h average line
     assert "data-pts=" in body        # per-point data for the hover/tap tooltip
-    assert "crosshair" in body and "chart-tip" in body
+    assert "crosshair" in body and "chart-readout" in body
     assert "Funding @signal" in body  # signal-log column relabeled (snapshot, not live)
     assert r.headers["cache-control"].startswith("no-store")
 
