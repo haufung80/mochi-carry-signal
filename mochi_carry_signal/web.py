@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
-from .approval import ApprovalError, AuthError, approve, reject
+from .approval import ApprovalError, AuthError, approve, reject, retry
 from .chart import SignalEvent, build_funding_chart
 from .config import get_settings
 from .data import hyperliquid as hl
@@ -209,6 +209,16 @@ def dashboard(request: Request) -> HTMLResponse:
     funding = _live_funding_view(settings)
     signals = _recent_signals()
     positions = get_pm_client().positions()
+    # Mark signals whose arb FAILED to execute as retryable (the fire request
+    # succeeded -> 'fired', but the PM arb is in 'error'), plus fire-time errors.
+    arb_status = {int(p["arb_id"]): (p.get("status") or "").lower()
+                  for p in positions if p.get("arb_id") is not None}
+    for s in signals:
+        st = arb_status.get(s["arb_id"]) if s.get("arb_id") is not None else None
+        s["arb_status"] = st
+        s["retryable"] = (s["kind"] == "OPEN" and
+                          (s["status"] == "error"
+                           or (s["status"] == "fired" and st == "error")))
     resp = templates.TemplateResponse(request, "dashboard.html", {
         "funding": funding,
         "signals": signals,
@@ -258,3 +268,16 @@ def reject_signal(signal_id: int, secret: str = Form(default="")):
     except ApprovalError as exc:
         return HTMLResponse(f"cannot reject: {exc}", status_code=409)
     return _redirect_home("rejected")
+
+
+@app.post("/signals/{signal_id}/retry")
+def retry_signal(signal_id: int, secret: str = Form(default="")):
+    """Retry a failed OPEN: close the stuck arb + re-open a fresh attempt."""
+    try:
+        retry(signal_id, secret=secret)
+    except AuthError:
+        return HTMLResponse("unauthorized: bad app secret", status_code=401)
+    except ApprovalError as exc:
+        # Includes the transient "still closing — try again in a few seconds".
+        return HTMLResponse(f"cannot retry: {exc}", status_code=409)
+    return _redirect_home("retried")

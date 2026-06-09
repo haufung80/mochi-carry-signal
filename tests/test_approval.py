@@ -16,7 +16,13 @@ import httpx
 import pytest
 
 from mochi_carry_signal import pm_client as pm_mod
-from mochi_carry_signal.approval import AuthError, approve, reject
+from mochi_carry_signal.approval import (
+    ApprovalError,
+    AuthError,
+    approve,
+    reject,
+    retry,
+)
 from mochi_carry_signal.config import get_settings
 from mochi_carry_signal.db import session_scope
 from mochi_carry_signal.models import Signal
@@ -167,3 +173,72 @@ def test_offline_stub_open_does_not_touch_network(spy_notifier):
     updated = approve(sid, secret=get_settings().app_secret)
     assert updated.status == "fired"
     assert isinstance(updated.arb_id, int)
+
+
+# --- retry (close failed arb + re-open fresh) -------------------------------
+
+def test_retry_failed_open_closes_and_reopens(wired_pm, spy_notifier):
+    """A fired OPEN whose arb failed -> retry closes the old arb, re-opens with a
+    FRESH idempotency key, and lands back at 'fired' with the new arb_id."""
+    sid = _make_signal(kind="OPEN", status="fired", arb_id=1)
+    updated = retry(sid, secret=get_settings().app_secret)
+
+    paths = [r.url.path for r in wired_pm]
+    assert any(p.endswith("/close") for p in paths)   # freed the old arb
+    assert any(p.endswith("/open") for p in paths)     # re-opened fresh
+    assert updated.status == "fired" and updated.arb_id == 777
+    with session_scope() as db:
+        row = db.get(Signal, sid)
+        assert row.status == "fired" and row.arb_id == 777
+        assert row.idempotency_key != KEY and "-r" in row.idempotency_key  # fresh key
+    assert [c[0] for c in spy_notifier.calls] == ["opened"]
+
+
+def test_retry_wrong_secret_raises_auth(spy_notifier):
+    sid = _make_signal(kind="OPEN", status="fired", arb_id=1)
+    with pytest.raises(AuthError):
+        retry(sid, secret="WRONG")
+
+
+def test_retry_non_retryable_signal_raises(spy_notifier):
+    """Only fired/error OPENs are retryable — a pending one is not."""
+    sid = _make_signal(kind="OPEN", status="pending")
+    with pytest.raises(ApprovalError):
+        retry(sid, secret=get_settings().app_secret)
+
+
+def test_retry_transient_when_symbol_still_closing(monkeypatch, spy_notifier):
+    """If the re-open 409s (old arb still closing), retry raises a friendly
+    transient error and does NOT push the signal into 'error'."""
+    sid = _make_signal(kind="OPEN", status="fired", arb_id=1)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/open"):
+            return httpx.Response(409, json={
+                "detail": "A leg symbol is already held by a non-closed arb"})
+        if request.url.path.endswith("/close"):
+            return httpx.Response(200, json={"status": "closing", "arb_id": 1})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    client = pm_mod.PMClient(get_settings())
+
+    def _request(method, path, *, json=None):
+        with httpx.Client(transport=transport) as c:
+            resp = c.request(method, client._url(path), json=json,
+                             headers=client._headers)
+        if resp.status_code >= 400:
+            raise pm_mod.PMError(f"PM {method} {path} -> {resp.status_code}: "
+                                 f"{resp.text}")
+        return resp.json() if resp.content else None
+
+    monkeypatch.setattr(client, "_request", _request)
+    monkeypatch.setattr(client._s, "testing", False)
+    monkeypatch.setattr(client._s, "dry_run", False)
+    monkeypatch.setattr(pm_mod, "_client", client)
+
+    with pytest.raises(ApprovalError) as ei:
+        retry(sid, secret=get_settings().app_secret)
+    assert "still closing" in str(ei.value)
+    with session_scope() as db:                  # transient -> not marked error
+        assert db.get(Signal, sid).status == "fired"

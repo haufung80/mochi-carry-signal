@@ -46,6 +46,8 @@
     .btn-approve:hover { background: #166534; }
     .btn-reject { background: #4a1414; color: #f87171; }
     .btn-reject:hover { background: #5b1a1a; }
+    .btn-retry { background: #3a2a08; color: #facc15; }
+    .btn-retry:hover { background: #4a370a; }
     .secret { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2e38; border-radius: 6px;
               padding: 4px 8px; font-size: 12px; width: 130px; }
     .banner { background: #0c2a3a; color: #60a5fa; border: 1px solid #1d3a4a; border-radius: 8px;
@@ -194,6 +196,7 @@
           <td class="l">{{ "yes" if s.spot_available else "no" }}</td>
           <td class="l">
             <span class="pill s-{{ s.status }}">{{ s.status }}</span>
+            {% if s.status == 'fired' and s.arb_status == 'error' %}<div class="neg" style="font-size:11px">⚠ arb execution failed</div>{% endif %}
             {% if s.status == 'error' and s.error_message %}<div class="muted">{{ s.error_message[:120] }}</div>{% endif %}
           </td>
           <td class="mono">{{ s.arb_id if s.arb_id is not none else "—" }}</td>
@@ -207,6 +210,13 @@
               <form method="post" action="/signals/{{ s.id }}/reject">
                 {% if app_secret_required %}<input type="hidden" name="secret" value="">{% endif %}
                 <button class="btn-reject" type="submit">Reject</button>
+              </form>
+            </div>
+            {% elif s.retryable %}
+            <div class="actions">
+              <form method="post" action="/signals/{{ s.id }}/retry" title="Close the failed arb and re-open a fresh attempt">
+                {% if app_secret_required %}<input class="secret" type="password" name="secret" placeholder="app secret" required>{% endif %}
+                <button class="btn-retry" type="submit">Retry</button>
               </form>
             </div>
             {% else %}<span class="muted">—</span>{% endif %}
