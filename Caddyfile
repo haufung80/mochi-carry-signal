@@ -1,9 +1,16 @@
-# Caddy auto-provisions + auto-renews HTTPS for this hostname and reverse-proxies
-# to the signal app container (service name `app`, port 8100) over the compose
-# network.
-#
-# Before Caddy can obtain the Let's Encrypt cert, this hostname's DNS A record
-# must already point to THIS server's static IP, and ports 80 + 443 must be open.
-mochi-carry-signal-prod.duckdns.org {
+# Caddy auto-provisions + auto-renews HTTPS for these hostnames and reverse-proxies
+# to the signal app container (service `app`, port 8100) over the compose network.
+# Each hostname's DNS A record must point to this box's static IP, with ports
+# 80 + 443 open, before Caddy can obtain the Let's Encrypt certificate.
+
+# Primary production hostname (DuckDNS -> this box's static IP):
+mochi-carry-signal.duckdns.org {
+    reverse_proxy app:8100
+}
+
+# IP-based fallback: sslip.io resolves <ip>.sslip.io to the IP itself, so the
+# dashboard stays reachable over HTTPS even if DuckDNS is unavailable (it had a
+# multi-day outage during the initial deploy). 47-130-164-133 = the static IP.
+47-130-164-133.sslip.io {
     reverse_proxy app:8100
 }

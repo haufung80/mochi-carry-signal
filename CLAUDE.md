@@ -145,7 +145,7 @@ backtester into this repo's `signal.py`.
 
 Production runs as a **self-contained Docker stack** (`docker-compose.prod.yml`) on its OWN AWS Lightsail
 VM — SEPARATE from the position-manager — deliberately mirroring the PM's setup: **Caddy** terminates
-HTTPS (auto Let's Encrypt for `mochi-carry-signal-prod.duckdns.org`) and reverse-proxies to the app on `:8100`;
+HTTPS (auto Let's Encrypt for `mochi-carry-signal.duckdns.org`) and reverse-proxies to the app on `:8100`;
 a **Litestream** sidecar continuously backs up `signals.db` to S3/R2 (idles until `LITESTREAM_*` set). Only
 Caddy's 80/443 are public; `./data` on the host holds the SQLite DB. The app reaches the PM over its public
 DNS (`PM_BASE_URL=https://mochi-position-manager.duckdns.org`) with the shared `X-Arb-Secret`. The
