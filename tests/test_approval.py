@@ -242,3 +242,28 @@ def test_retry_transient_when_symbol_still_closing(monkeypatch, spy_notifier):
     assert "still closing" in str(ei.value)
     with session_scope() as db:                  # transient -> not marked error
         assert db.get(Signal, sid).status == "fired"
+
+
+# --- secret gate hardening --------------------------------------------------
+
+def test_check_secret_fail_closed_in_production(monkeypatch):
+    """Empty APP_SECRET denies actions in production (offline=False); opens only
+    in dev (TESTING/DRY_RUN) — so a public deploy can't fire wide-open."""
+    import mochi_carry_signal.approval as ap
+    s = get_settings()
+    monkeypatch.setattr(s, "app_secret", "")
+    monkeypatch.setattr(s, "testing", False)
+    monkeypatch.setattr(s, "dry_run", False)     # offline -> False (production)
+    with pytest.raises(AuthError):
+        ap._check_secret("whatever")
+    monkeypatch.setattr(s, "testing", True)       # offline -> True (dev) -> opens
+    ap._check_secret(None)
+
+
+def test_check_secret_constant_time_matches(monkeypatch):
+    import mochi_carry_signal.approval as ap
+    s = get_settings()
+    monkeypatch.setattr(s, "app_secret", "s3cr3t")
+    ap._check_secret("s3cr3t")                     # correct -> no raise
+    with pytest.raises(AuthError):
+        ap._check_secret("nope")

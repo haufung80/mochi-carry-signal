@@ -64,7 +64,7 @@
     .sw-raw   { border-top-color: #5b6675; }
     .sw-entry { border-top-color: #facc15; border-top-style: dashed; }
     .lg-open  { color: #4ade80; } .lg-close { color: #f87171; }
-    .chart { width: 100%; height: auto; display: block; touch-action: pan-y; }
+    .chart { width: 100%; height: auto; display: block; touch-action: pan-y; cursor: crosshair; }
     .chart .grid  { stroke: #232732; stroke-width: 1; }
     .chart .axis  { stroke: #2a2e38; stroke-width: 1; }
     .chart .ylab, .chart .xlab { fill: #6b7280; font-size: 9px;
@@ -86,12 +86,15 @@
     .chart-card { position: relative; }
     .chart .crosshair { stroke: #8aa0b6; stroke-width: 1; stroke-dasharray: 3 3; display: none; pointer-events: none; }
     .chart .cursor-dot { fill: #60a5fa; stroke: #0f1115; stroke-width: 1.5; display: none; pointer-events: none; }
-    /* readout pinned to the TOP of the chart (above the plot) — never under the
-       finger; the crosshair on the plot marks the touched x-position. */
-    .chart-readout { position: absolute; inset: 0 0 auto 0; display: none; z-index: 4; pointer-events: none;
-                     background: #1a1d24; padding: 0 2px; font-size: 11px; line-height: 1.5; color: #e6e6e6;
-                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-    .chart-readout .d { color: #888; } .chart-readout .ft { color: #60a5fa; } .chart-readout .fr { color: #9aa3af; }
+    /* floating tooltip (mochi-position-manager behaviour): pinned to the TOP and,
+       on touch, to the side AWAY from the finger so the thumb never covers it;
+       follows the cursor on desktop; persists after touch-lift (mouse-leave hides). */
+    .chart-plot { position: relative; }
+    .chart-tip { position: absolute; display: none; pointer-events: none; z-index: 5; top: 2px;
+                 background: #0f1115; border: 1px solid #2a2e38; border-radius: 6px; padding: 6px 8px;
+                 font-size: 11px; line-height: 1.5; white-space: nowrap; color: #e6e6e6;
+                 font-variant-numeric: tabular-nums; }
+    .chart-tip .d { color: #888; } .chart-tip .ft { color: #60a5fa; } .chart-tip .fr { color: #9aa3af; }
     @media (max-width: 640px) {
       body { padding: 12px;
              padding-left: max(12px, env(safe-area-inset-left));
@@ -156,10 +159,10 @@
         <span class="lg lg-open">▲ OPEN</span>
         <span class="lg lg-close">▼ CLOSE</span>
       </span>
-      <span class="chart-readout"></span>
     </div>
     {% if f.chart %}
     {% set c = f.chart %}
+    <div class="chart-plot">
     <svg class="chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ f.asset }} funding history, last {{ chart_days }} days"
          data-pts='{{ c.tooltip_points|tojson }}' data-pl="{{ c.plot_left }}" data-pr="{{ c.plot_right }}" data-pt="{{ c.plot_top }}" data-pb="{{ c.plot_bottom }}">
       {% for t in c.y_ticks %}
@@ -183,6 +186,8 @@
       <line class="crosshair" x1="0" y1="0" x2="0" y2="0"/>
       <circle class="cursor-dot" cx="0" cy="0" r="3.5"/>
     </svg>
+    <div class="chart-tip"></div>
+    </div>
     {% else %}
     <div class="muted">No funding history available for {{ f.asset }} in the last {{ chart_days }} days.</div>
     {% endif %}
@@ -243,38 +248,15 @@
     {% endif %}
   </div>
 
-  <!-- ===== live PM open arbs ===== -->
-  <h2>Open funding-arb positions <span class="muted" style="text-transform:none">(from {{ pm_base_url }})</span></h2>
-  <div class="card">
-    {% if not positions %}<div class="muted">No open positions reported by the position-manager{% if offline %} (offline — PM not queried){% endif %}.</div>{% else %}
-    <table>
-      <thead><tr>
-        <th>arb_id</th><th class="l">Asset</th><th class="l">Status</th>
-        <th class="l">Neutral</th><th>Funding</th><th>Net</th>
-      </tr></thead>
-      <tbody>
-        {% for p in positions %}
-        <tr>
-          <td class="mono">{{ p.arb_id }}</td>
-          <td class="l">{{ p.asset }}</td>
-          <td class="l">{{ p.status }}</td>
-          <td class="l">{{ "yes" if p.neutral else "no" }}</td>
-          <td>{% if p.pnl %}${{ "%.4f"|format(p.pnl.funding_total) }}{% else %}—{% endif %}</td>
-          <td>{% if p.pnl %}${{ "%.4f"|format(p.pnl.net) }}{% else %}—{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-  </div>
-
   <div class="muted">Last refreshed {{ now.strftime("%Y-%m-%d %H:%M:%S") }} UTC ·
     {% if app_secret_required %}approve/reject require the app secret{% else %}app secret not set (approve/reject open — dev mode){% endif %}.</div>
 
   <script>
-  /* Chart hover/tap crosshair + tooltip (true unclamped values). Pointer Events
-     unify mouse + touch; touch-action:pan-y lets vertical page-scroll through
-     while horizontal drag slides the crosshair (iPhone tap + slide). */
+  /* Chart crosshair + floating tooltip (true unclamped values), mirroring
+     mochi-position-manager: on TOUCH the tip pins to the top and to the side
+     AWAY from the finger (thumb never covers it) and persists after lift; on
+     MOUSE it follows the cursor and hides on leave. touch-action:pan-y keeps
+     vertical page-scroll working while a horizontal drag scrubs the chart. */
   (function () {
     function p2(n) { return (n < 10 ? '0' : '') + n; }
     function fmtDate(ts) { var d = new Date(ts * 1000);
@@ -287,14 +269,14 @@
       if (!pts.length) return;
       var pl = +svg.dataset.pl, pr = +svg.dataset.pr, pt = +svg.dataset.pt, pb = +svg.dataset.pb;
       var vbw = (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 720;
-      var card = svg.closest('.chart-card');
+      var plot = svg.closest('.chart-plot');
       var line = svg.querySelector('.crosshair'), dot = svg.querySelector('.cursor-dot');
-      var readout = card.querySelector('.chart-readout');
+      var tip = plot.querySelector('.chart-tip');
       function nearest(x) { var lo = 0, hi = pts.length - 1;
         while (lo < hi) { var m = (lo + hi) >> 1; if (pts[m][0] < x) lo = m + 1; else hi = m; }
         if (lo > 0 && Math.abs(pts[lo - 1][0] - x) <= Math.abs(pts[lo][0] - x)) lo--;
         return pts[lo]; }
-      function show(clientX) {
+      function scrub(clientX, isTouch) {
         var r = svg.getBoundingClientRect(); if (!r.width) return;
         var x = (clientX - r.left) / (r.width / vbw);
         if (x < pl) x = pl; if (x > pr) x = pr;
@@ -303,18 +285,21 @@
         line.setAttribute('y1', pt); line.setAttribute('y2', pb); line.style.display = 'block';
         if (ty != null) { dot.setAttribute('cx', px); dot.setAttribute('cy', ty); dot.style.display = 'block'; }
         else dot.style.display = 'none';
-        // Readout is pinned to the TOP of the chart (CSS), so it never sits under
-        // the finger — we only set its text here, no positioning.
-        readout.innerHTML = '<span class="d">' + fmtDate(ts) + '</span> · funding <span class="fr">' +
-          sgn(raw) + '</span>' + (tr != null ? ' · 72h <span class="ft">' + sgn(tr) + '</span>' : '');
-        readout.style.display = 'block';
+        tip.innerHTML = '<span class="d">' + fmtDate(ts) + '</span><br>funding <span class="fr">' +
+          sgn(raw) + '</span>' + (tr != null ? '<br>72h avg <span class="ft">' + sgn(tr) + '</span>' : '');
+        tip.style.display = 'block'; tip.style.top = '2px';
+        var fx = clientX - r.left;
+        if (isTouch) {            // pin opposite the finger so the thumb never covers it
+          tip.style.left = (fx < r.width / 2 ? (r.width - tip.offsetWidth - 6) : 6) + 'px';
+        } else {                  // follow the cursor; flip left near the right edge
+          var lx = fx + 14; if (lx > r.width - tip.offsetWidth - 6) lx = fx - tip.offsetWidth - 14;
+          tip.style.left = Math.max(0, lx) + 'px';
+        }
       }
-      function hide() { line.style.display = 'none'; dot.style.display = 'none'; readout.style.display = 'none'; }
-      svg.addEventListener('pointermove', function (e) { show(e.clientX); });
-      svg.addEventListener('pointerdown', function (e) { show(e.clientX); });
-      svg.addEventListener('pointerleave', hide);
-      svg.addEventListener('pointerup', hide);
-      svg.addEventListener('pointercancel', hide);
+      function hide() { line.style.display = 'none'; dot.style.display = 'none'; tip.style.display = 'none'; }
+      svg.addEventListener('pointermove', function (e) { scrub(e.clientX, e.pointerType !== 'mouse'); });
+      svg.addEventListener('pointerdown', function (e) { scrub(e.clientX, e.pointerType !== 'mouse'); });
+      svg.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') hide(); });
     });
   })();
   </script>

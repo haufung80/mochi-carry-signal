@@ -14,6 +14,7 @@ when ``TESTING``/``DRY_RUN`` is set (no network).
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 import time
@@ -39,14 +40,19 @@ class AuthError(ApprovalError):
 
 
 def _check_secret(provided: str | None) -> None:
-    """Gate the approve/reject action with APP_SECRET.
+    """Gate approve/reject/retry with APP_SECRET (constant-time compare).
 
-    Empty configured secret => gate OPEN (local dev). Otherwise the provided
-    value must match exactly."""
-    configured = get_settings().app_secret
+    An empty configured secret opens the gate ONLY in dev (TESTING/DRY_RUN); in
+    production (a public deploy) it FAILS CLOSED — actions are denied — so the
+    site can never fire wide-open through a missing-secret misconfiguration."""
+    s = get_settings()
+    configured = s.app_secret
     if not configured:
-        return
-    if provided != configured:
+        if s.offline:            # local dev / tests only
+            return
+        raise AuthError("actions are disabled: APP_SECRET is not set")
+    # Constant-time comparison to avoid leaking the secret via timing.
+    if not hmac.compare_digest(provided or "", configured):
         raise AuthError("bad app secret")
 
 

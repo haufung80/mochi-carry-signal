@@ -13,14 +13,17 @@ authors = [{ name = "haufung" }]
 
 # Pinned for reproducibility (mirrors the position-manager's pinning discipline).
 dependencies = [
-    "fastapi==0.115.0",
+    "fastapi==0.115.14",           # 0.115.x patch series; raises the starlette cap
+                                     # so the CVE-fixed starlette below can install
+    "starlette==0.40.0",            # > fastapi 0.115.0's transitive 0.38.x: fixes the
+                                     # multipart DoS CVE-2024-47874 (public-facing)
     "uvicorn[standard]==0.30.6",
     "httpx==0.27.2",
     "pydantic==2.9.2",
     "pydantic-settings==2.5.2",
     "sqlalchemy==2.0.35",
-    "jinja2==3.1.4",
-    "python-multipart==0.0.12",     # form bodies for the approve/reject POSTs
+    "jinja2==3.1.6",                # fixes CVE-2024-56326/56201, CVE-2025-27516
+    "python-multipart==0.0.32",     # form bodies; clears the DoS CVEs (2024 + 2026)
 ]
 
 [project.optional-dependencies]

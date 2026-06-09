@@ -50,14 +50,17 @@ def test_dashboard_200_with_funding_signals_positions(monkeypatch, fake_hl):
     assert "Carry Signal" in body
     assert "BTC" in body
     assert "pending" in body          # the seeded signal status pill
-    assert "arb_id" in body
-    assert "9" in body                # the open position
+    assert "arb_id" in body           # signal-log column header
+    # The PM positions/PnL section is removed (public release) — even though
+    # positions are still fetched (for the retry flag), they are NOT rendered.
+    assert "Open funding-arb positions" not in body
+    assert "funding_total" not in body          # the PnL field is no longer shown
     # The funding-history chart renders as inline SVG (no CDN, offline-safe).
     assert "Funding history" in body
     assert "<svg" in body
     assert 'class="trail"' in body    # the trailing-72h average line
     assert "data-pts=" in body        # per-point data for the hover/tap tooltip
-    assert "crosshair" in body and "chart-readout" in body
+    assert "crosshair" in body and "chart-tip" in body
     assert "Funding @signal" in body  # signal-log column relabeled (snapshot, not live)
     assert r.headers["cache-control"].startswith("no-store")
 
@@ -105,6 +108,15 @@ def test_dashboard_funding_fetch_is_cached(monkeypatch):
 def test_healthz():
     with _client() as c:
         assert c.get("/healthz").text == "ok"
+
+
+def test_security_headers_present():
+    with _client() as c:
+        r = c.get("/healthz")
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["x-frame-options"] == "DENY"
+    csp = r.headers.get("content-security-policy", "")
+    assert "frame-ancestors 'none'" in csp and "default-src 'self'" in csp
 
 
 def test_approve_route_without_secret_401(monkeypatch):

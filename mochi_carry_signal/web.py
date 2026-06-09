@@ -95,6 +95,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Inline <style>/<script>/style="" need 'unsafe-inline'; everything else is
+# self-hosted (no CDN). Jinja autoescaping handles output encoding; this CSP is
+# defense-in-depth + clickjacking/sniffing protection for the public deploy.
+_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Security headers on every response (public site)."""
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Content-Security-Policy"] = _CSP
+    return resp
+
 
 # --- helpers ----------------------------------------------------------------
 
@@ -208,11 +226,12 @@ def dashboard(request: Request) -> HTMLResponse:
     settings = get_settings()
     funding = _live_funding_view(settings)
     signals = _recent_signals()
-    positions = get_pm_client().positions()
-    # Mark signals whose arb FAILED to execute as retryable (the fire request
-    # succeeded -> 'fired', but the PM arb is in 'error'), plus fire-time errors.
+    # Live PM positions are fetched ONLY to flag a signal whose arb failed to
+    # execute as retryable — they are NOT rendered (private PnL; this dashboard is
+    # public). A fired signal whose PM arb is 'error' (or a fire-time error) is
+    # retryable.
     arb_status = {int(p["arb_id"]): (p.get("status") or "").lower()
-                  for p in positions if p.get("arb_id") is not None}
+                  for p in get_pm_client().positions() if p.get("arb_id") is not None}
     for s in signals:
         st = arb_status.get(s["arb_id"]) if s.get("arb_id") is not None else None
         s["arb_status"] = st
@@ -222,13 +241,11 @@ def dashboard(request: Request) -> HTMLResponse:
     resp = templates.TemplateResponse(request, "dashboard.html", {
         "funding": funding,
         "signals": signals,
-        "positions": positions,
         "entry_apr": settings.entry_apr,
         "exit_apr": settings.exit_apr,
         "lookback_hours": settings.lookback_hours,
         "chart_days": settings.chart_lookback_days,
         "size_mode": settings.size_mode,
-        "pm_base_url": settings.pm_base_url,
         "app_secret_required": bool(settings.app_secret),
         "offline": settings.offline,
         "now": datetime.now(timezone.utc),
